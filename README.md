@@ -174,13 +174,29 @@ chmod +x setup_moltbot.sh
 
 ## 4. Credential Isolation mit n8n
 
-### Das Problem
+### Was ist das Problem?
 
 Wenn du dem Bot direkte API-Keys gibst (Gmail, Calendar, Notion...), kann ein
 Angreifer bei einer Kompromittierung des Bots **alle Keys stehlen** und
 uneingeschraenkt nutzen.
 
-### Die Loesung: n8n als Gatekeeper
+```
+SCHLECHT (ohne n8n):
+  Bot-Container hat Gmail-Key -> Bot wird gehackt -> Angreifer liest ALLE Mails,
+  sendet Mails als du, loescht Mails, ...
+
+GUT (mit n8n):
+  Bot-Container hat KEINEN Key -> Bot wird gehackt -> Angreifer kann maximal
+  "zeige letzte 10 Mail-Betreffs" aufrufen (und sonst nichts)
+```
+
+### Was ist n8n?
+
+**n8n** (gesprochen "n-eight-n") ist eine Open-Source Workflow-Automatisierung -
+aehnlich wie Zapier oder Make, aber **selbst gehostet**. Du installierst es auf
+deinem eigenen Rechner/Server, und alle Daten bleiben bei dir.
+
+**Im Kontext von Openclaw nutzen wir n8n als "Gatekeeper":**
 
 ```
 Bot ──[Webhook + Secret]──> n8n ──[OAuth Token]──> Gmail API
@@ -193,51 +209,633 @@ Bot ──[Webhook + Secret]──> n8n ──[OAuth Token]──> Gmail API
                          - Daten gefiltert/sanitized?
 ```
 
+Der Bot ruft **nur** Webhook-URLs auf. n8n entscheidet dann, ob die Anfrage
+berechtigt ist, fuehrt den eigentlichen API-Call durch (mit den nur n8n bekannten
+Credentials) und gibt nur die erlaubten Daten zurueck.
+
 ### Warum n8n statt Zapier?
 
 | Kriterium | n8n (self-hosted) | Zapier |
 |-----------|-------------------|--------|
-| Credentials lokal | Ja - verschluesselt auf deinem Server | Nein - in Zapier Cloud |
-| Open Source | Ja | Nein |
-| Kosten | Kostenlos | Ab $20/Monat |
-| Custom Validation | Voller JS/Python Code | Stark eingeschraenkt |
+| Credentials lokal | Ja - verschluesselt auf deinem Rechner | Nein - in Zapier Cloud |
+| Open Source | Ja (Fair-Code Lizenz) | Nein |
+| Kosten | Kostenlos (self-hosted) | Ab $20/Monat |
+| Custom Code | Voller JS/Python in Nodes | Stark eingeschraenkt |
 | Air-Gapped moeglich | Ja | Nein |
-| Audit-Logs | Vollstaendig | Eingeschraenkt |
+| Audit-Logs | Vollstaendig, lokal | Eingeschraenkt, Cloud |
+| DSGVO / Datenschutz | Alles lokal | Daten in US-Cloud |
 
-**n8n ist die richtige Wahl** fuer Zero-Trust, weil alle Credentials auf deiner
-eigenen Infrastruktur bleiben. Der Bot bekommt nur einen Webhook-URL und ein
-Shared Secret - selbst bei vollstaendiger Kompromittierung des Bots kann ein
-Angreifer nur die vordefinierten, eingeschraenkten Aktionen ausfuehren.
+---
 
-### n8n einrichten
+### 4A. n8n Beginner-Anleitung (Schritt fuer Schritt)
+
+> Diese Anleitung geht davon aus, dass du n8n noch nie benutzt hast.
+> Jeder Schritt wird einzeln erklaert.
+
+#### Schritt 1: n8n starten
+
+n8n ist bereits in deiner `docker-compose.yml` enthalten (wurde durch
+`setup_moltbot.sh` erstellt). Du musst nur den Zugang freischalten.
 
 ```bash
-# 1. Port temporaer fuer Setup freigeben
-#    In docker-compose.yml beim n8n-Service einkommentieren:
-#    ports:
-#      - "127.0.0.1:5678:5678"
+# Oeffne die docker-compose.yml in einem Texteditor
+nano ~/openclaw/docker-compose.yml
+```
 
-# 2. n8n starten
-cd ~/openclaw && docker compose up -d n8n
+Suche den Abschnitt `n8n:` und finde diese auskommentierte Zeile:
 
-# 3. Browser oeffnen
-open http://localhost:5678
+```yaml
+    # ports:
+    #   - "127.0.0.1:5678:5678"
+```
 
-# 4. Anmelden mit:
-#    User:     openclaw-admin
-#    Password: (steht in config/.env unter N8N_PASSWORD)
+Entferne die `#`-Zeichen, so dass es so aussieht:
 
-# 5. Workflows importieren (siehe README-CREDENTIAL-ISOLATION.md)
+```yaml
+    ports:
+      - "127.0.0.1:5678:5678"
+```
 
-# 6. Port wieder schliessen!
-#    Kommentiere die ports-Zeile in docker-compose.yml aus
+Speichere die Datei (`Ctrl+O`, `Enter`, `Ctrl+X` in nano).
+
+Starte n8n:
+
+```bash
+cd ~/openclaw
 docker compose up -d n8n
 ```
 
-### Beispiel: Gmail Read-Only Workflow
+Pruefe, ob n8n laeuft:
 
-Siehe [README-CREDENTIAL-ISOLATION.md](README-CREDENTIAL-ISOLATION.md) fuer
-ausfuehrliche Workflow-Definitionen inkl. Gmail Send, Calendar Read/Create.
+```bash
+docker logs openclaw-n8n
+# Du solltest sehen: "n8n ready on 0.0.0.0, port 5678"
+```
+
+#### Schritt 2: n8n im Browser oeffnen
+
+Oeffne deinen Browser und gehe zu:
+
+```
+http://localhost:5678
+```
+
+Du siehst ein Login-Formular. Deine Zugangsdaten stehen in der `.env`-Datei:
+
+```bash
+# Passwort nachschauen (User ist "openclaw-admin")
+grep N8N_PASSWORD ~/openclaw/config/.env
+```
+
+Melde dich an mit:
+- **Email/User:** `openclaw-admin`
+- **Password:** (der Wert aus der .env-Datei)
+
+#### Schritt 3: Die n8n-Oberflaeche verstehen
+
+Nach dem Login siehst du das n8n-Dashboard. Hier eine kurze Orientierung:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  n8n                                          [+ New]   │
+│                                                         │
+│  ┌─ Sidebar ──┐  ┌─ Hauptbereich ───────────────────┐  │
+│  │            │  │                                    │  │
+│  │ Workflows  │  │  Hier erscheinen deine Workflows  │  │
+│  │ Credentials│  │  (aktuell leer)                    │  │
+│  │ Executions │  │                                    │  │
+│  │ Settings   │  │  [+ Add first workflow]            │  │
+│  │            │  │                                    │  │
+│  └────────────┘  └────────────────────────────────────┘  │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+- **Workflows** = Deine Automatisierungen (das, was wir gleich bauen)
+- **Credentials** = Gespeicherte Zugangsdaten (Gmail-Login, API-Keys etc.)
+- **Executions** = Protokoll aller Ausfuehrungen (wann lief was, mit welchem Ergebnis)
+- **Settings** = Einstellungen
+
+#### Schritt 4: Google-Credentials einrichten (fuer Gmail/Calendar)
+
+Bevor du Workflows bauen kannst, muss n8n sich bei Google anmelden koennen.
+Das laeuft ueber **OAuth 2.0** - n8n bekommt ein Token, mit dem es in deinem
+Namen auf Gmail/Calendar zugreifen kann.
+
+##### 4a. Google Cloud Console einrichten
+
+1. Oeffne [https://console.cloud.google.com](https://console.cloud.google.com)
+2. Melde dich mit deinem Google-Account an
+3. Erstelle ein neues Projekt:
+   - Oben in der Leiste auf das Projekt-Dropdown klicken
+   - **"Neues Projekt"** waehlen
+   - Name: `openclaw-n8n`
+   - Auf **"Erstellen"** klicken
+4. Warte bis das Projekt erstellt ist (einige Sekunden)
+
+##### 4b. Gmail API aktivieren
+
+1. Gehe im Menue links zu **"APIs & Dienste"** > **"Bibliothek"**
+2. Suche nach **"Gmail API"**
+3. Klicke drauf und dann auf **"Aktivieren"**
+4. Wiederhole fuer **"Google Calendar API"** (falls du Calendar brauchst)
+
+##### 4c. OAuth-Einwilligungsbildschirm konfigurieren
+
+1. Gehe zu **"APIs & Dienste"** > **"OAuth-Einwilligungsbildschirm"**
+2. Waehle **"Extern"** (oder "Intern" falls du Google Workspace hast)
+3. Fulle aus:
+   - **App-Name:** `Openclaw n8n`
+   - **Support-E-Mail:** deine E-Mail
+   - **Autorisierte Domains:** (leer lassen)
+   - **Kontakt-E-Mail des Entwicklers:** deine E-Mail
+4. Klicke **"Speichern und fortfahren"**
+5. Bei **"Bereiche"** (Scopes): Klicke **"Bereiche hinzufuegen"**
+   - Suche und waehle:
+     - `https://www.googleapis.com/auth/gmail.readonly` (Mails lesen)
+     - `https://www.googleapis.com/auth/gmail.send` (Mails senden)
+     - `https://www.googleapis.com/auth/calendar.readonly` (Kalender lesen)
+     - `https://www.googleapis.com/auth/calendar.events` (Termine erstellen)
+   - Klicke **"Aktualisieren"**, dann **"Speichern und fortfahren"**
+6. Bei **"Testnutzer"**: Klicke **"Nutzer hinzufuegen"**
+   - Trage deine eigene Gmail-Adresse ein
+   - Klicke **"Speichern und fortfahren"**
+
+##### 4d. OAuth-Client-ID erstellen
+
+1. Gehe zu **"APIs & Dienste"** > **"Anmeldedaten"**
+2. Klicke **"+ Anmeldedaten erstellen"** > **"OAuth-Client-ID"**
+3. Anwendungstyp: **"Webanwendung"**
+4. Name: `n8n`
+5. **Autorisierte Weiterleitungs-URIs:**
+   - Klicke **"+ URI hinzufuegen"**
+   - Trage ein: `http://localhost:5678/rest/oauth2-credential/callback`
+6. Klicke **"Erstellen"**
+7. Du siehst jetzt **Client-ID** und **Client-Secret**
+   - **Kopiere beide Werte** (du brauchst sie gleich in n8n)
+
+##### 4e. Credentials in n8n hinterlegen
+
+1. Gehe in n8n zurueck (http://localhost:5678)
+2. Klicke in der Sidebar auf **"Credentials"**
+3. Klicke **"+ Add credential"**
+4. Suche nach **"Gmail OAuth2 API"** und waehle es aus
+5. Fulle aus:
+   - **Client ID:** (aus Google Console kopiert)
+   - **Client Secret:** (aus Google Console kopiert)
+6. Klicke auf **"Sign in with Google"**
+   - Ein Google-Popup oeffnet sich
+   - Waehle deinen Google-Account
+   - Google warnt "Diese App wurde nicht verifiziert" -> Klicke **"Weiter"**
+   (Das ist normal bei eigenen Apps. Nur du nutzt sie.)
+   - Erlaube die angeforderten Berechtigungen
+7. Zurueck in n8n steht jetzt **"Connected"**
+8. Klicke **"Save"**
+
+Wiederhole den Vorgang fuer **"Google Calendar OAuth2 API"** falls noetig.
+Du kannst dieselbe Client-ID und dasselbe Client-Secret verwenden.
+
+#### Schritt 5: Deinen ersten Workflow erstellen ("Gmail lesen")
+
+Jetzt bauen wir den ersten Workflow. Er nimmt Anfragen vom Bot entgegen
+und gibt die letzten 10 Mail-Betreffs zurueck.
+
+##### 5a. Neuen Workflow erstellen
+
+1. Klicke in der Sidebar auf **"Workflows"**
+2. Klicke **"+ Add workflow"** (oder das Plus-Symbol oben rechts)
+3. Du siehst jetzt den **Workflow-Editor** - eine leere Flaeche mit einem
+   Start-Node in der Mitte
+
+##### 5b. Webhook-Node hinzufuegen (Eingang)
+
+Der Webhook ist der "Eingang" - hier kommen die Anfragen vom Bot rein.
+
+1. Klicke auf das **"+"**-Symbol rechts vom Start-Node
+   (oder klicke irgendwo auf die Flaeche und dann oben auf **"+ Add node"**)
+2. Suche nach **"Webhook"**
+3. Klicke auf **"Webhook"** um ihn hinzuzufuegen
+4. Konfiguriere den Webhook:
+   - **HTTP Method:** `POST`
+   - **Path:** `openclaw/gmail/read`
+   - Unter **"Authentication"** waehle: `Header Auth`
+   - **Header Auth Parameter:**
+     - Name: `X-Webhook-Secret`
+     - Value: (kopiere den WEBHOOK_SECRET aus deiner .env)
+
+So sieht die Konfiguration aus:
+
+```
+┌─────────────────────────────┐
+│  Webhook                    │
+│                             │
+│  HTTP Method:  POST         │
+│  Path:  openclaw/gmail/read │
+│  Auth:  Header Auth         │
+│    Name:  X-Webhook-Secret  │
+│    Value: (dein Secret)     │
+└─────────────────────────────┘
+```
+
+##### 5c. Gmail-Node hinzufuegen
+
+1. Klicke auf das **"+"** rechts vom Webhook-Node
+2. Suche nach **"Gmail"**
+3. Klicke auf **"Gmail"**
+4. Konfiguriere:
+   - **Credential:** Waehle die Gmail-Credential, die du in Schritt 4e erstellt hast
+   - **Resource:** `Message`
+   - **Operation:** `Get Many`
+   - **Return All:** Nein
+   - **Limit:** `10`
+   - Unter **"Add Filter"**:
+     - **Label IDs:** `INBOX`
+
+So sieht die Konfiguration aus:
+
+```
+┌─────────────────────────────┐
+│  Gmail                      │
+│                             │
+│  Credential:  Gmail OAuth2  │
+│  Resource:    Message       │
+│  Operation:   Get Many      │
+│  Limit:       10            │
+│  Label:       INBOX         │
+└─────────────────────────────┘
+```
+
+##### 5d. Code-Node hinzufuegen (Daten filtern)
+
+Wir wollen **nicht** den kompletten Mail-Inhalt an den Bot zurueckgeben -
+nur Betreff, Absender und Datum. Dafuer nutzen wir einen Code-Node.
+
+1. Klicke auf **"+"** rechts vom Gmail-Node
+2. Suche nach **"Code"**
+3. Klicke auf **"Code"**
+4. Waehle **JavaScript** als Sprache
+5. Ersetze den Code mit:
+
+```javascript
+// Nur sichere Metadaten zurueckgeben - KEINE vollstaendigen Mail-Bodies
+const results = [];
+
+for (const item of $input.all()) {
+  const headers = item.json.payload?.headers || [];
+
+  // Header-Werte extrahieren
+  const getHeader = (name) => {
+    const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
+    return h ? h.value : '(unbekannt)';
+  };
+
+  results.push({
+    json: {
+      id: item.json.id,
+      subject: getHeader('Subject'),
+      from: getHeader('From'),
+      date: getHeader('Date'),
+      snippet: (item.json.snippet || '').substring(0, 200)
+      // Bewusst KEIN body, KEINE attachments, KEINE weiteren Header
+    }
+  });
+}
+
+return results;
+```
+
+##### 5e. Respond-Node hinzufuegen (Antwort an Bot)
+
+1. Klicke auf **"+"** rechts vom Code-Node
+2. Suche nach **"Respond to Webhook"**
+3. Klicke drauf
+4. Konfiguriere:
+   - **Respond With:** `All Incoming Items`
+
+##### 5f. Workflow testen
+
+Dein Workflow sieht jetzt so aus:
+
+```
+[Webhook] ──> [Gmail: Get Many] ──> [Code: Filter] ──> [Respond to Webhook]
+```
+
+1. Klicke oben rechts auf **"Test workflow"** (Play-Button)
+2. n8n wartet jetzt auf eine eingehende Webhook-Anfrage
+3. Oeffne ein **neues Terminal** und sende eine Test-Anfrage:
+
+```bash
+# Ersetze DEIN_WEBHOOK_SECRET mit dem Wert aus config/.env
+curl -s -X POST http://localhost:5678/webhook-test/openclaw/gmail/read \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: DEIN_WEBHOOK_SECRET" \
+  -d '{}' | python3 -m json.tool
+```
+
+Du solltest eine JSON-Antwort mit deinen letzten 10 Mail-Betreffs sehen:
+
+```json
+[
+  {
+    "id": "18d3a...",
+    "subject": "Deine Bestellung ist unterwegs",
+    "from": "shop@example.com",
+    "date": "Fri, 31 Jan 2026 10:00:00 +0100",
+    "snippet": "Lieferung voraussichtlich Montag..."
+  }
+]
+```
+
+4. Zurueck in n8n siehst du gruene Haekchen an jedem Node - der Test war erfolgreich
+
+##### 5g. Workflow aktivieren
+
+1. Klicke oben rechts den Toggle **"Inactive"** -> **"Active"**
+   (Der Toggle wird orange/gruen)
+2. Der Workflow ist jetzt dauerhaft aktiv und wartet auf Anfragen
+
+**Wichtig:** Wenn der Workflow aktiv ist, aendert sich die URL von
+`/webhook-test/...` zu `/webhook/...` (ohne `-test`). Der Bot nutzt
+die URL **ohne** `-test`.
+
+##### 5h. Workflow speichern und benennen
+
+1. Klicke oben links auf den Workflow-Namen (steht "My workflow")
+2. Benenne ihn um: `Openclaw - Gmail Read`
+3. Klicke irgendwo ausserhalb zum Speichern (oder `Ctrl+S`)
+
+#### Schritt 6: Zweiten Workflow erstellen ("Gmail senden")
+
+Wiederhole den Vorgang, aber mit diesen Aenderungen:
+
+1. Neuen Workflow erstellen, Name: `Openclaw - Gmail Send`
+2. **Webhook-Node:**
+   - Path: `openclaw/gmail/send`
+   - Methode: POST
+   - Header Auth wie oben
+3. **Code-Node (Validierung)** - Fuege **vor** dem Gmail-Node einen Code-Node ein:
+
+```javascript
+// Validierung BEVOR die Mail gesendet wird
+const input = $input.all()[0].json.body || $input.all()[0].json;
+
+const errors = [];
+
+// 1. Empfaenger pruefen - nur erlaubte Domains
+const allowedDomains = ['@deinedomain.de', '@partner.com'];
+const to = (input.to || '').toLowerCase();
+if (!allowedDomains.some(d => to.endsWith(d))) {
+  errors.push('Empfaenger ' + input.to + ' nicht in Whitelist. Erlaubt: ' + allowedDomains.join(', '));
+}
+
+// 2. Pflichtfelder
+if (!input.to) errors.push('Kein Empfaenger angegeben');
+if (!input.subject) errors.push('Kein Betreff angegeben');
+if (!input.body) errors.push('Kein Text angegeben');
+
+// 3. Laengen-Limits
+if ((input.body || '').length > 5000) {
+  errors.push('Text zu lang (max. 5000 Zeichen)');
+}
+
+// 4. Keine Attachments
+if (input.attachments && input.attachments.length > 0) {
+  errors.push('Attachments sind nicht erlaubt');
+}
+
+if (errors.length > 0) {
+  throw new Error('Validierung fehlgeschlagen: ' + errors.join('; '));
+}
+
+// Validiert - weiterleiten
+return [{
+  json: {
+    to: input.to,
+    subject: '[Openclaw] ' + (input.subject || '').substring(0, 100),
+    body: input.body
+  }
+}];
+```
+
+4. **Gmail-Node (Senden):**
+   - Operation: `Send`
+   - To: `{{ $json.to }}`
+   - Subject: `{{ $json.subject }}`
+   - Message: `{{ $json.body }}`
+
+5. **Respond-Node:**
+   - Respond With: `JSON`
+   - Body: `{ "success": true, "message": "Mail gesendet" }`
+
+Fertiger Workflow:
+
+```
+[Webhook] ──> [Code: Validierung] ──> [Gmail: Send] ──> [Respond to Webhook]
+```
+
+#### Schritt 7: Port wieder schliessen!
+
+Nachdem alle Workflows eingerichtet und getestet sind:
+
+```bash
+# docker-compose.yml bearbeiten
+nano ~/openclaw/docker-compose.yml
+
+# Die ports-Zeilen beim n8n-Service wieder auskommentieren:
+    # ports:
+    #   - "127.0.0.1:5678:5678"
+
+# n8n neu starten (jetzt ohne offenen Port)
+cd ~/openclaw && docker compose up -d n8n
+```
+
+n8n laeuft weiterhin intern im Docker-Netzwerk. Der Bot kann es ueber
+`http://n8n:5678` erreichen. Von aussen ist n8n nicht mehr zugaenglich.
+
+**Falls du spaeter Workflows aendern musst:** Port temporaer wieder freigeben,
+aendern, Port schliessen.
+
+#### Schritt 8: Pruefen ob alles funktioniert
+
+```bash
+# 1. Pruefe ob n8n intern erreichbar ist (vom Bot-Container aus)
+docker exec openclaw-agent wget -q -O- http://n8n:5678/healthz
+# Erwartete Antwort: {"status":"ok"}
+
+# 2. Pruefe ob n8n von aussen NICHT erreichbar ist
+curl -s http://localhost:5678/healthz
+# Erwartete Antwort: Connection refused (gut!)
+
+# 3. Teste den Workflow vom Bot-Container aus
+docker exec openclaw-agent wget -q -O- \
+  --header="Content-Type: application/json" \
+  --header="X-Webhook-Secret: $(grep WEBHOOK_SECRET ~/openclaw/config/.env | cut -d= -f2)" \
+  --post-data='{}' \
+  http://n8n:5678/webhook/openclaw/gmail/read
+```
+
+---
+
+### 4B. n8n Advanced-Anleitung
+
+> Fuer Nutzer, die mit den Grundlagen vertraut sind.
+
+#### Rate Limiting mit Code-Nodes
+
+n8n hat kein eingebautes Rate-Limiting pro Webhook. Du kannst es mit einem
+Code-Node am Anfang jedes Workflows umsetzen:
+
+```javascript
+// Rate Limiter - max. 10 Anfragen pro Minute
+// Nutzt n8n Static Data (persistiert zwischen Ausfuehrungen)
+
+const staticData = $getWorkflowStaticData('global');
+const now = Date.now();
+const windowMs = 60 * 1000; // 1 Minute
+const maxRequests = 10;
+
+// Alte Eintraege bereinigen
+staticData.requests = (staticData.requests || []).filter(t => now - t < windowMs);
+
+if (staticData.requests.length >= maxRequests) {
+  throw new Error('Rate limit exceeded: max ' + maxRequests + ' requests per minute');
+}
+
+staticData.requests.push(now);
+return $input.all();
+```
+
+#### Audit-Logging-Workflow
+
+Erstelle einen separaten Workflow, der alle Aktionen protokolliert:
+
+1. Neuer Workflow: `Openclaw - Audit Log`
+2. Webhook-Path: `openclaw/internal/audit`
+3. Code-Node:
+
+```javascript
+// Audit-Eintrag formatieren
+const input = $input.all()[0].json;
+
+const logEntry = {
+  timestamp: new Date().toISOString(),
+  action: input.action || 'unknown',
+  source: input.source || 'bot',
+  details: input.details || {},
+  requestId: input.requestId || 'none',
+  result: input.result || 'pending'
+};
+
+// In n8n sichtbar (Executions-Tab)
+console.log('[AUDIT]', JSON.stringify(logEntry));
+
+return [{ json: logEntry }];
+```
+
+4. Optional: Fuege einen **Write File**-Node an, um in eine Log-Datei zu schreiben,
+   oder einen **Telegram**/**Email**-Node, um bei kritischen Events zu alarmieren.
+
+Rufe den Audit-Workflow aus anderen Workflows auf, indem du am Ende
+einen **HTTP Request**-Node hinzufuegst:
+
+```
+URL:    http://localhost:5678/webhook/openclaw/internal/audit
+Method: POST
+Body:   { "action": "gmail_read", "result": "success", "details": { "count": 10 } }
+```
+
+#### Error-Handling in Workflows
+
+Jeder Node kann einen **Error-Branch** haben. So richtest du ihn ein:
+
+1. Klicke auf einen Node (z.B. den Gmail-Node)
+2. Klicke auf die drei Punkte **"..."** oben rechts
+3. Waehle **"Add Error Handler"** (oder ziehe vom roten Ausgang)
+4. Verbinde den Error-Output mit einem **Respond to Webhook**-Node:
+   - Respond With: `JSON`
+   - Response Code: `500`
+   - Body: `{ "error": true, "message": "Gmail-Abfrage fehlgeschlagen" }`
+
+```
+                                    ┌──> [Respond: Erfolg]
+[Webhook] ──> [Gmail] ──> [Code] ──┤
+                  │                 └──> (normalerweise nicht erreicht)
+                  │ (Fehler)
+                  └──────────────────> [Respond: Fehler (500)]
+```
+
+#### Workflow-Export und Versionierung
+
+Du kannst Workflows als JSON exportieren und in Git versionieren:
+
+1. Oeffne einen Workflow
+2. Klicke oben rechts auf **"..."** > **"Export"**
+3. Speichere die JSON-Datei
+
+Oder per API (wenn Port temporaer offen):
+
+```bash
+# Alle Workflows exportieren
+curl -s -u "openclaw-admin:$(grep N8N_PASSWORD ~/openclaw/config/.env | cut -d= -f2)" \
+  http://localhost:5678/api/v1/workflows \
+  | python3 -m json.tool > ~/openclaw/backups/n8n-workflows-export.json
+```
+
+Importieren:
+
+```bash
+# Workflow importieren
+curl -s -u "openclaw-admin:PASSWORT" \
+  -X POST http://localhost:5678/api/v1/workflows \
+  -H "Content-Type: application/json" \
+  -d @workflow-gmail-read.json
+```
+
+#### Mehrere Credentials sicher verwalten
+
+Wenn du viele Services anbindest (Gmail, Calendar, Notion, Slack, ...):
+
+1. **Jeder Service bekommt eigene Credentials** in n8n - nicht ein grosses
+   Sammel-Token
+2. **Credentials benennen** nach Schema: `Openclaw - Gmail (Read)`,
+   `Openclaw - Gmail (Send)`, `Openclaw - Calendar (Read)`
+3. **Minimale Berechtigungen**: Gmail-Read-Credential bekommt nur
+   `gmail.readonly` Scope, nicht den vollen Zugriff
+4. **Rotation**: Erstelle alle 90 Tage neue OAuth-Tokens
+   (in Google Console unter Anmeldedaten > Client-Secret zuruecksetzen)
+
+#### n8n selbst absichern (Hardening)
+
+```bash
+# 1. n8n-Datenbank verschluesseln (ist standardmaessig durch N8N_ENCRYPTION_KEY aktiv)
+# Pruefe, ob der Key gesetzt ist:
+grep N8N_ENCRYPTION_KEY ~/openclaw/config/.env
+
+# 2. Basic Auth ist NICHT fuer Produktion geeignet wenn n8n extern erreichbar waere.
+# In unserem Setup ist n8n nur intern erreichbar -> Basic Auth ist OK.
+
+# 3. n8n-Updates einspielen (regelmaessig!)
+docker pull n8nio/n8n:latest
+cd ~/openclaw && docker compose up -d n8n
+
+# 4. Execution-History begrenzen (in docker-compose.yml environment hinzufuegen):
+#    EXECUTIONS_DATA_MAX_AGE=168   (Stunden, = 7 Tage)
+#    EXECUTIONS_DATA_PRUNE=true
+```
+
+#### Weitere Workflow-Ideen
+
+| Workflow | Webhook-Path | Was er tut |
+|----------|-------------|-----------|
+| Calendar Read | `/openclaw/calendar/read` | Termine der naechsten 7 Tage |
+| Calendar Create | `/openclaw/calendar/create` | Termin erstellen (mit Validierung) |
+| Notion Query | `/openclaw/notion/query` | Notion-Datenbank durchsuchen |
+| Slack Send | `/openclaw/slack/send` | Nachricht in Slack-Channel posten |
+| File Upload | `/openclaw/files/upload` | Datei zu Google Drive hochladen |
+| Security Alert | `/openclaw/security-alert` | Honeypot/Intrusion-Alarm verarbeiten |
+
+Ausfuehrliche Workflow-JSONs fuer Gmail, Calendar und Notion findest du in
+[README-CREDENTIAL-ISOLATION.md](README-CREDENTIAL-ISOLATION.md).
 
 ---
 
@@ -856,13 +1454,12 @@ API-Aufrufe machen.
 
 ### Kann ich n8n statt Zapier verwenden?
 
-**Ja, und du solltest.** n8n ist self-hosted, open-source und haelt alle
-Credentials lokal auf deiner Infrastruktur. Bei Zapier liegen deine OAuth-Tokens
-in deren Cloud. Fuer ein Zero-Trust-Setup ist n8n die einzig sinnvolle Wahl
-unter den Low-Code-Plattformen. Details zur MCP-Server-Aehnlichkeit: n8n
-Webhooks funktionieren konzeptionell aehnlich wie ein MCP-Server - du definierst
-explizit, welche Aktionen erlaubt sind, mit welchen Parametern, und welche
-Daten zurueckgegeben werden.
+**Ja, und du solltest.** Siehe [Sektion 4](#4-credential-isolation-mit-n8n) fuer
+die vollstaendige Beginner- und Advanced-Anleitung. Kurzfassung: n8n ist
+self-hosted, open-source und haelt alle Credentials lokal. Bei Zapier liegen
+deine OAuth-Tokens in deren Cloud. n8n-Webhooks funktionieren konzeptionell
+aehnlich wie ein MCP-Server - du definierst explizit, welche Aktionen erlaubt
+sind, mit welchen Parametern und welche Daten zurueckgegeben werden.
 
 ### Brauche ich einen Server oder reicht mein Laptop?
 
