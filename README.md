@@ -160,32 +160,40 @@ chmod +x setup_openclaw.sh
 
 ### Was das Skript tut (4 Phasen)
 
-**Phase 1: Docker Setup**
-1. Erkennt das Betriebssystem (Linux/macOS)
-2. Prueft ob Docker installiert und gestartet ist
-3. Installiert Docker automatisch falls noetig:
-   - **macOS:** Homebrew + Colima + Docker CLI
-   - **Linux:** get.docker.com + systemd
-4. Verifiziert Docker Compose V2 und openssl
+#### Phase 1: Docker Setup
 
-**Phase 2: Configuration**
-5. **Verzeichnisse erstellen** - Strukturierte Ordner unter `~/openclaw/`
-6. **API-Keys abfragen** - Unsichtbare Eingabe (wie Passwort), niemals in History
-7. **Secrets generieren** - Encryption-Key, Webhook-Secret per `openssl rand`
-8. **`.env` schreiben** - chmod 600, nur Owner kann lesen
-9. **`docker-compose.yml` generieren** - Kompletter Stack mit allen Services
-10. **`openclaw.json` erstellen** - Sicherheits-Konfiguration
-11. **Honeypot-Dateien platzieren** - Fake SSH-Keys, AWS-Credentials, etc.
-12. **Nachtmodus-Cronjob** - Optional automatisch einrichten
+- Erkennt das Betriebssystem (Linux/macOS)
+- Prueft ob Docker installiert und gestartet ist
+- Installiert Docker automatisch falls noetig:
+  - **macOS:** Homebrew + Colima + Docker CLI
+  - **Linux:** get.docker.com + systemd
+- Verifiziert Docker Compose V2 und openssl
 
-**Phase 3: n8n Workflow Templates**
-13. Kopiert 4 vorgefertigte n8n-Workflow-Templates in das Install-Verzeichnis
-    - Gmail Read, Gmail Send, Calendar Read, Calendar Create
+#### Phase 2: Configuration
 
-**Phase 4: Stack Startup**
-14. Startet den Docker-Stack (optional)
-15. Wartet auf n8n Health-Check
-16. Zeigt Zusammenfassung und naechste Schritte
+- **Verzeichnisse erstellen** — Strukturierte Ordner unter `~/openclaw/`
+- **Anthropic API-Key abfragen** — Der Key fuer das LLM (Claude). Unsichtbare
+  Eingabe wie ein Passwort, landet niemals in der Shell-History. Optional wird
+  auch der Telegram Bot Token abgefragt. **Wichtig:** Gmail/Calendar-Credentials
+  kommen NICHT hier rein — die werden spaeter direkt in n8n hinterlegt
+  (siehe [Schritt 4](#schritt-4-google-credentials-einrichten-fuer-gmailcalendar)).
+- **Secrets generieren** — Encryption-Key, Webhook-Secret per `openssl rand`
+- **`.env` schreiben** — chmod 600, nur Owner kann lesen
+- **`docker-compose.yml` generieren** — Kompletter Stack mit allen Services
+- **`openclaw.json` erstellen** — Sicherheits-Konfiguration
+- **Honeypot-Dateien platzieren** — Fake SSH-Keys, AWS-Credentials, etc.
+- **Nachtmodus-Cronjob** — Optional automatisch einrichten
+
+#### Phase 3: n8n Workflow Templates
+
+- Kopiert 4 vorgefertigte n8n-Workflow-Templates in das Install-Verzeichnis:
+  Gmail Read, Gmail Send, Calendar Read, Calendar Create
+
+#### Phase 4: Stack Startup
+
+- Startet den Docker-Stack (optional)
+- Wartet auf n8n Health-Check
+- Zeigt Zusammenfassung und naechste Schritte
 
 ### Erzeugte Verzeichnisstruktur
 
