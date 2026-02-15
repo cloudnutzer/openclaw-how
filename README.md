@@ -1722,7 +1722,7 @@ openclaw doctor              # 4. Automatische Reparatur
 | Telegram starten | `docker compose --profile telegram up -d` |
 | Logs eines Containers | `docker logs -f openclaw-agent` |
 | WhatsApp QR-Code anzeigen | `docker logs -f openclaw-whatsapp` |
-| n8n Health-Check (intern) | `docker exec openclaw-agent wget -q -O- http://n8n:5678/healthcheck` |
+| n8n Health-Check (intern) | `docker exec openclaw-n8n wget -q -O- http://localhost:5678/healthcheck` |
 | Alles stoppen | `cd ~/openclaw && docker compose down` |
 
 ---
