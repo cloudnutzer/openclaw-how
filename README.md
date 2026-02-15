@@ -1,6 +1,12 @@
-# Openclaw (ehem. Clawdbot / Moltbot) - Zero-Trust Implementierung
+# OpenClaw — Zero-Trust Implementierung
 
-> Stand: Januar 2026 | Version 2.0
+> Stand: Februar 2026 | Version 2.1
+>
+> **Hinweis zur Namensgebung:** Dieses Projekt hiess frueher "Moltbot" bzw.
+> "Clawdbot" und wurde zu "OpenClaw" umbenannt. Einige Setup-Skripte und
+> Config-Dateien tragen noch den alten Namen (`setup_moltbot.sh`,
+> `moltbot.json`) — das ist beabsichtigt, um bestehende Installationen
+> nicht zu brechen.
 
 ---
 
@@ -112,9 +118,12 @@ Schicht 6: Detection   - Honeypots, Audit-Logs, Anomalie-Erkennung
 |-----------|-------|
 | `user: "1000:1000"` | Bot laeuft nie als Root |
 | `read_only: true` | Bot kann das System-Filesystem nicht veraendern |
-| `no-new-privileges` | Kein `sudo`, kein SUID-Bit nutzbar |
+| `no-new-privileges` | Verhindert Privilege Escalation via SUID/SGID-Binaries |
 | `127.0.0.1:18789` | Port nur vom Host erreichbar, nicht aus dem Netz |
 | `tmpfs: /tmp (noexec)` | Kein ausfuehrbarer Code in /tmp |
+| `cap_drop: ALL` | Entfernt alle Linux-Capabilities (minimale Rechte) |
+| `security_opt: seccomp:default` | Seccomp-Profil blockiert gefaehrliche Syscalls |
+| `pids_limit: 256` | Verhindert Fork-Bombs |
 | `memory: 1g, cpus: 1.0` | Verhindert Ressourcen-Erschoepfung |
 | `internal network` | Container-zu-Container ohne Host-Exposure |
 
@@ -132,8 +141,8 @@ Schicht 6: Detection   - Honeypots, Audit-Logs, Anomalie-Erkennung
 
 ```bash
 # Herunterladen
-git clone <repo-url> moltbot-how
-cd moltbot-how
+git clone <repo-url> openclaw-how
+cd openclaw-how
 
 # Ausfuehrbar machen & starten
 chmod +x setup_moltbot.sh
@@ -660,11 +669,11 @@ aendern, Port schliessen.
 
 ```bash
 # 1. Pruefe ob n8n intern erreichbar ist (vom Bot-Container aus)
-docker exec openclaw-agent wget -q -O- http://n8n:5678/healthz
+docker exec openclaw-agent wget -q -O- http://n8n:5678/healthcheck
 # Erwartete Antwort: {"status":"ok"}
 
 # 2. Pruefe ob n8n von aussen NICHT erreichbar ist
-curl -s http://localhost:5678/healthz
+curl -s http://localhost:5678/healthcheck
 # Erwartete Antwort: Connection refused (gut!)
 
 # 3. Teste den Workflow vom Bot-Container aus
@@ -775,9 +784,13 @@ Du kannst Workflows als JSON exportieren und in Git versionieren:
 
 Oder per API (wenn Port temporaer offen):
 
+> **Hinweis:** n8n 1.0+ nutzt API-Key-Authentifizierung statt Basic Auth.
+> Erstelle einen API-Key unter **Settings > API > Create API Key** in der
+> n8n-Oberflaeche.
+
 ```bash
-# Alle Workflows exportieren
-curl -s -u "openclaw-admin:$(grep N8N_PASSWORD ~/openclaw/config/.env | cut -d= -f2)" \
+# Alle Workflows exportieren (n8n 1.0+ mit API-Key)
+curl -s -H "X-N8N-API-KEY: dein-api-key" \
   http://localhost:5678/api/v1/workflows \
   | python3 -m json.tool > ~/openclaw/backups/n8n-workflows-export.json
 ```
@@ -786,7 +799,7 @@ Importieren:
 
 ```bash
 # Workflow importieren
-curl -s -u "openclaw-admin:PASSWORT" \
+curl -s -H "X-N8N-API-KEY: dein-api-key" \
   -X POST http://localhost:5678/api/v1/workflows \
   -H "Content-Type: application/json" \
   -d @workflow-gmail-read.json
@@ -802,8 +815,11 @@ Wenn du viele Services anbindest (Gmail, Calendar, Notion, Slack, ...):
    `Openclaw - Gmail (Send)`, `Openclaw - Calendar (Read)`
 3. **Minimale Berechtigungen**: Gmail-Read-Credential bekommt nur
    `gmail.readonly` Scope, nicht den vollen Zugriff
-4. **Rotation**: Erstelle alle 90 Tage neue OAuth-Tokens
-   (in Google Console unter Anmeldedaten > Client-Secret zuruecksetzen)
+4. **Rotation**: Pruefe alle 90 Tage, ob die OAuth-Tokens noch gueltig sind.
+   Falls nicht: in n8n die betroffene Credential oeffnen und erneut mit
+   Google verbinden ("Sign in with Google"). Das Client-Secret in der
+   Google Console nur zuruecksetzen, wenn ein Leak vermutet wird — das
+   invalidiert **alle** bestehenden Verbindungen.
 
 #### n8n selbst absichern (Hardening)
 
@@ -1074,13 +1090,21 @@ wird die Session eingefroren und ein Zustandssnapshot erstellt.
 
 ### 7.3 Denied Commands & Patterns
 
-Der Bot kann folgende Befehle/Muster **niemals** ausfuehren:
+Der Bot kann folgende **Shell-Befehle** niemals ausfuehren (Deny-Liste fuer
+das Terminal/exec-Tool):
+
 - `sudo`, `su`, `chmod`, `chown`, `mount`
 - `curl`, `wget`, `nc`, `nmap`, `ssh`
 - `docker`, `kubectl`
 - `rm -rf /`, Fork-Bombs, Reverse-Shells
 - Command-Substitution (`$(...)`, Backticks)
 - Pipe to Shell (`| sh`, `| bash`)
+
+> **Wichtig:** Diese Liste betrifft nur Shell-Befehle, die der Bot ueber das
+> Terminal/exec-Tool ausfuehren koennte. Die HTTP-Kommunikation mit n8n-Webhooks
+> (Sektion 4) laeuft ueber das interne SDK des Bots (z.B. Node.js `fetch`),
+> **nicht** ueber Shell-Befehle wie `curl`. Der Bot kann also n8n-Workflows
+> aufrufen, ohne die Deny-Liste zu verletzen.
 
 ---
 
@@ -1233,9 +1257,11 @@ crontab -e
 Folgende Zeilen hinzufuegen:
 
 ```cron
-# Openclaw Nachtmodus
-0 22 * * * /home/DEIN_USER/openclaw/nightmode.sh stop
-0 7  * * * /home/DEIN_USER/openclaw/nightmode.sh start
+# OpenClaw Nachtmodus
+# Linux: /home/DEIN_USER/openclaw/nightmode.sh
+# macOS: /Users/DEIN_USER/openclaw/nightmode.sh
+0 22 * * * $HOME/openclaw/nightmode.sh stop
+0 7  * * * $HOME/openclaw/nightmode.sh start
 ```
 
 #### Automatisch durch Setup-Skript
@@ -1248,7 +1274,9 @@ Das Setup-Skript bietet an, den Cronjob direkt einzurichten.
 cat ~/openclaw/logs/nightmode.log
 ```
 
-### 9.2 Firewall-Regeln (UFW auf Linux)
+### 9.2 Firewall-Regeln
+
+#### Linux (UFW)
 
 ```bash
 # Sicherstellen, dass Port 18789 NICHT von aussen erreichbar ist
@@ -1263,10 +1291,25 @@ sudo ufw enable
 sudo ufw status
 ```
 
-### 9.3 Log-Rotation
+#### macOS
+
+macOS bindet den Port bereits auf `127.0.0.1` — das reicht in den meisten
+Faellen. Zusaetzlich kannst du die eingebaute Firewall aktivieren:
 
 ```bash
-# /etc/logrotate.d/openclaw
+# macOS Firewall aktivieren (Systemeinstellungen > Netzwerk > Firewall)
+# Oder per Terminal:
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+
+# Pruefe, ob Port nur auf localhost lauscht:
+lsof -iTCP:18789 -sTCP:LISTEN -n -P
+```
+
+### 9.3 Log-Rotation
+
+#### Linux (logrotate)
+
+```bash
 cat << 'EOF' | sudo tee /etc/logrotate.d/openclaw
 /home/*/openclaw/logs/*.log {
     weekly
@@ -1280,12 +1323,25 @@ cat << 'EOF' | sudo tee /etc/logrotate.d/openclaw
 EOF
 ```
 
+#### macOS (newsyslog)
+
+macOS hat kein `logrotate`. Nutze stattdessen `newsyslog`:
+
+```bash
+# /etc/newsyslog.d/openclaw.conf
+sudo tee /etc/newsyslog.d/openclaw.conf << 'EOF'
+# logfilename                        [owner:group] mode count size when  flags
+/Users/*/openclaw/logs/*.log                        644  12    1024 $W0   GJ
+EOF
+```
+
 ### 9.4 Docker-Daemon Hardening
 
-Stelle sicher, dass der Docker-Daemon selbst sicher konfiguriert ist:
+Stelle sicher, dass der Docker-Daemon selbst sicher konfiguriert ist.
+
+Datei: `/etc/docker/daemon.json`
 
 ```json
-# /etc/docker/daemon.json
 {
   "no-new-privileges": true,
   "live-restore": true,
@@ -1341,13 +1397,16 @@ nmap -p 18789 DEINE_LOKALE_IP
 #### Methode D: Lokal pruefen
 
 ```bash
-# Pruefen, ob Port NUR auf 127.0.0.1 lauscht:
+# Linux: Pruefen, ob Port NUR auf 127.0.0.1 lauscht:
 ss -tlnp | grep 18789
+
+# macOS: Gleiche Pruefung mit lsof:
+lsof -iTCP:18789 -sTCP:LISTEN -n -P
 
 # Erwartetes Ergebnis:
 # LISTEN  127.0.0.1:18789  ...
 #
-# ALARM wenn statt 127.0.0.1 dort 0.0.0.0 steht!
+# ALARM wenn statt 127.0.0.1 dort 0.0.0.0 oder *:18789 steht!
 ```
 
 ---
@@ -1475,7 +1534,7 @@ Tester: ______________
 
 NETZWERK
 [ ] Port 18789 von aussen NICHT erreichbar (Smartphone-Test)
-[ ] Port 18789 nur auf 127.0.0.1 gebunden (ss-Test)
+[ ] Port 18789 nur auf 127.0.0.1 gebunden (ss/lsof-Test)
 [ ] n8n Port 5678 von aussen NICHT erreichbar
 
 JAILBREAK
@@ -1650,7 +1709,7 @@ openclaw doctor              # 4. Automatische Reparatur
 | OAuth-Token abgelaufen | `openclaw models auth setup-token --provider anthropic` |
 | WhatsApp getrennt | `openclaw channels logout` dann `openclaw channels login --verbose` |
 | Nach Update kaputt | `openclaw doctor --fix` dann `openclaw gateway restart` |
-| Alles kaputt (letzter Ausweg) | `openclaw gateway stop && trash ~/.openclaw && openclaw channels login` |
+| Alles kaputt (letzter Ausweg) | Siehe Sektion 4.9 in der Troubleshooting-Anleitung (Backup zuerst!) |
 
 ---
 
@@ -1660,7 +1719,7 @@ openclaw doctor              # 4. Automatische Reparatur
 |---------------|--------|
 | Bestimmte Version installieren | `npm i -g openclaw@<version>` |
 | Aktuelle npm-Version pruefen | `npm view openclaw version` |
-| Git: Zu Datum zurueck | `git checkout "$(git rev-list -n 1 --before=\"2026-01-01\" origin/main)"` |
+| Git: Zu Datum zurueck | `git checkout "$(git rev-list -n 1 --before='2026-01-01' origin/main)"` |
 | Nach Rollback immer ausfuehren | `openclaw doctor && openclaw gateway restart` |
 
 ---
@@ -1700,7 +1759,7 @@ openclaw doctor              # 4. Automatische Reparatur
 | Telegram starten | `docker compose --profile telegram up -d` |
 | Logs eines Containers | `docker logs -f openclaw-agent` |
 | WhatsApp QR-Code anzeigen | `docker logs -f openclaw-whatsapp` |
-| n8n Health-Check (intern) | `docker exec openclaw-agent wget -q -O- http://n8n:5678/healthz` |
+| n8n Health-Check (intern) | `docker exec openclaw-agent wget -q -O- http://n8n:5678/healthcheck` |
 | Alles stoppen | `cd ~/openclaw && docker compose down` |
 
 ---

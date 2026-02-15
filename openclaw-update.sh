@@ -20,6 +20,17 @@
 
 set -euo pipefail
 
+# ── Portable readlink -f (works on macOS < 15 and Linux) ────────────────────
+resolve_path() {
+    local target="$1"
+    if readlink -f "$target" 2>/dev/null; then
+        return
+    fi
+    # Fallback for macOS < 15 (BSD readlink without -f)
+    python3 -c "import os; print(os.path.realpath('$target'))" 2>/dev/null \
+        || echo "$target"
+}
+
 # ── Configuration ────────────────────────────────────────────────────────────
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 OPENCLAW_CONFIG="${OPENCLAW_CONFIG_PATH:-$OPENCLAW_HOME/openclaw.json}"
@@ -109,7 +120,7 @@ ok "Current OpenClaw version: $CURRENT_VERSION"
 INSTALL_METHOD="unknown"
 OPENCLAW_BIN=$(command -v openclaw 2>/dev/null || true)
 if [[ -n "$OPENCLAW_BIN" ]]; then
-    REAL_PATH=$(readlink -f "$OPENCLAW_BIN" 2>/dev/null || echo "$OPENCLAW_BIN")
+    REAL_PATH=$(resolve_path "$OPENCLAW_BIN")
     if [[ "$REAL_PATH" == *"node_modules"* ]] || [[ "$REAL_PATH" == *"npm"* ]] || [[ "$REAL_PATH" == *"pnpm"* ]]; then
         INSTALL_METHOD="global"
     elif [[ -d "$(dirname "$REAL_PATH")/.git" ]] || [[ -d "$(dirname "$(dirname "$REAL_PATH")")/.git" ]]; then
@@ -156,7 +167,7 @@ ok "Disk space: ${AVAILABLE_MB}MB available"
 
 # 1.9 — Check for source install clean worktree
 if [[ "$INSTALL_METHOD" == "source" ]]; then
-    REPO_DIR=$(dirname "$(readlink -f "$(command -v openclaw)")" 2>/dev/null || echo "")
+    REPO_DIR=$(dirname "$(resolve_path "$(command -v openclaw)")" 2>/dev/null || echo "")
     if [[ -n "$REPO_DIR" ]] && [[ -d "$REPO_DIR/.git" ]]; then
         if ! git -C "$REPO_DIR" diff --quiet 2>/dev/null; then
             warn "Git worktree has uncommitted changes. openclaw update requires a clean worktree."
@@ -384,15 +395,14 @@ fi
 header "UPDATE COMPLETE"
 
 echo ""
-echo -e "${GREEN}${BOLD}┌─────────────────────────────────────────────┐${NC}"
-echo -e "${GREEN}${BOLD}│         OpenClaw Update Summary              │${NC}"
-echo -e "${GREEN}${BOLD}├─────────────────────────────────────────────┤${NC}"
-echo -e "${GREEN}│  Previous : ${BOLD}$CURRENT_VERSION${NC}${GREEN}$(printf '%*s' $((25 - ${#CURRENT_VERSION})) '')│${NC}"
-echo -e "${GREEN}│  Current  : ${BOLD}$NEW_VERSION${NC}${GREEN}$(printf '%*s' $((25 - ${#NEW_VERSION})) '')│${NC}"
-echo -e "${GREEN}│  Channel  : ${BOLD}$UPDATE_CHANNEL${NC}${GREEN}$(printf '%*s' $((25 - ${#UPDATE_CHANNEL})) '')│${NC}"
-echo -e "${GREEN}│  Gateway  : ${BOLD}$(if [[ "$HEALTH_OK" == true ]]; then echo "✅ Healthy"; else echo "⚠️ Check logs"; fi)${NC}${GREEN}$(printf '%*s' 15 '')│${NC}"
-echo -e "${GREEN}│  Log      : ${BOLD}$LOG_FILE${NC}${GREEN}  │${NC}"
-echo -e "${GREEN}${BOLD}└─────────────────────────────────────────────┘${NC}"
+echo -e "${GREEN}${BOLD}OpenClaw Update Summary${NC}"
+echo -e "${GREEN}─────────────────────────────────${NC}"
+echo -e "  Previous : ${BOLD}$CURRENT_VERSION${NC}"
+echo -e "  Current  : ${BOLD}$NEW_VERSION${NC}"
+echo -e "  Channel  : ${BOLD}$UPDATE_CHANNEL${NC}"
+echo -e "  Gateway  : ${BOLD}$(if [[ "$HEALTH_OK" == true ]]; then echo "Healthy"; else echo "Check logs"; fi)${NC}"
+echo -e "  Log      : ${BOLD}$LOG_FILE${NC}"
+echo -e "${GREEN}─────────────────────────────────${NC}"
 echo ""
 
 if [[ "$SKIP_BACKUP" != true ]]; then
