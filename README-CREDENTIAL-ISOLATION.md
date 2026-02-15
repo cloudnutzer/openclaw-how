@@ -27,7 +27,7 @@ Wenn du OpenClaw Zugriff auf Gmail, Google Calendar, Notion etc. geben willst, s
 │                            DEIN NETZWERK                                │
 │                                                                         │
 │  ┌─────────────────┐         ┌─────────────────┐                       │
-│  │    MOLTBOT      │         │      n8n        │                       │
+│  │   OPENCLAW      │         │      n8n        │                       │
 │  │    Container    │         │   (Middleware)  │                       │
 │  │                 │  HTTP   │                 │      OAuth/API        │
 │  │  Kennt KEINE    │────────▶│  Hält alle      │─────────────────┐     │
@@ -201,7 +201,7 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
       "name": "Filter Sensitive Data",
       "type": "n8n-nodes-base.code",
       "parameters": {
-        "jsCode": "// Entferne sensible Daten vor der Rückgabe\nreturn items.map(item => ({\n  json: {\n    id: item.json.id,\n    subject: item.json.payload?.headers?.find(h => h.name === 'Subject')?.value,\n    from: item.json.payload?.headers?.find(h => h.name === 'From')?.value,\n    date: item.json.payload?.headers?.find(h => h.name === 'Date')?.value,\n    snippet: item.json.snippet?.substring(0, 200)\n    // KEINE vollständigen Bodies, KEINE Attachments\n  }\n}));"
+        "jsCode": "// Entferne sensible Daten vor der Rückgabe\nreturn $input.all().map(item => ({\n  json: {\n    id: item.json.id,\n    subject: item.json.payload?.headers?.find(h => h.name === 'Subject')?.value,\n    from: item.json.payload?.headers?.find(h => h.name === 'From')?.value,\n    date: item.json.payload?.headers?.find(h => h.name === 'Date')?.value,\n    snippet: item.json.snippet?.substring(0, 200)\n    // KEINE vollständigen Bodies, KEINE Attachments\n  }\n}));"
       }
     },
     {
@@ -294,7 +294,7 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
       "name": "Filter Private Events",
       "type": "n8n-nodes-base.code",
       "parameters": {
-        "jsCode": "// Entferne private Termine und sensible Details\nreturn items.map(item => ({\n  json: {\n    id: item.json.id,\n    title: item.json.summary,\n    start: item.json.start?.dateTime || item.json.start?.date,\n    end: item.json.end?.dateTime || item.json.end?.date,\n    location: item.json.location,\n    // KEINE: attendees, description, conferenceData, attachments\n    isBusy: item.json.transparency !== 'transparent'\n  }\n})).filter(item => {\n  // Filtere explizit private Termine\n  const title = item.json.title?.toLowerCase() || '';\n  return !title.includes('privat') && !title.includes('personal');\n});"
+        "jsCode": "// Entferne private Termine und sensible Details\nreturn $input.all().map(item => ({\n  json: {\n    id: item.json.id,\n    title: item.json.summary,\n    start: item.json.start?.dateTime || item.json.start?.date,\n    end: item.json.end?.dateTime || item.json.end?.date,\n    location: item.json.location,\n    // KEINE: attendees, description, conferenceData, attachments\n    isBusy: item.json.transparency !== 'transparent'\n  }\n})).filter(item => {\n  // Filtere explizit private Termine\n  const title = item.json.title?.toLowerCase() || '';\n  return !title.includes('privat') && !title.includes('personal');\n});"
       }
     }
   ]
@@ -548,7 +548,6 @@ async def send_email(
 # 1. n8n zu docker-compose.yml hinzufügen (siehe oben)
 
 # 2. Credentials generieren
-echo "N8N_PASSWORD=$(openssl rand -base64 32)" >> config/.env
 echo "N8N_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> config/.env
 echo "WEBHOOK_SECRET=$(openssl rand -hex 24)" >> config/.env
 
