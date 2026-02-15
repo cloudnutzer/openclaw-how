@@ -16,6 +16,7 @@
 8. [Wartung & Updates](#8-wartung--updates)
 9. [Betrieb & Hardening](#9-betrieb--hardening)
 10. [Sicherheitstests (Audit-Protokoll)](#10-sicherheitstests-audit-protokoll)
+11. [OpenClaw Cheatsheet — Alle Befehle auf einen Blick](#11-openclaw-cheatsheet--alle-befehle-auf-einen-blick)
 
 ---
 
@@ -1085,7 +1086,100 @@ Der Bot kann folgende Befehle/Muster **niemals** ausfuehren:
 
 ## 8. Wartung & Updates
 
-### Update-Skript
+### Update-Skript (`openclaw-update.sh`)
+
+Dieses Repository enthaelt ein fertiges Update-Skript (`openclaw-update.sh`), das den
+gesamten Update-Prozess automatisiert — inklusive Checks, Backup, Update, Doctor,
+Gateway-Restart und Health-Verifizierung.
+
+#### Schnellstart
+
+```bash
+# 1. Skript ausfuehrbar machen (einmalig)
+chmod +x openclaw-update.sh
+
+# 2. Update ausfuehren
+./openclaw-update.sh
+```
+
+Das wars! Das Skript erledigt alles automatisch und zeigt dir am Ende eine Zusammenfassung.
+
+#### Alle Optionen
+
+| Befehl | Was passiert |
+|--------|-------------|
+| `./openclaw-update.sh` | Standard-Update (prueft, sichert, aktualisiert, startet neu) |
+| `./openclaw-update.sh --dry-run` | Nur pruefen, NICHTS aendern (ideal zum Testen) |
+| `./openclaw-update.sh --force` | Update erzwingen (auch wenn schon aktuell) |
+| `./openclaw-update.sh --channel beta` | Auf Beta-Kanal wechseln |
+| `./openclaw-update.sh --channel dev` | Auf Dev-Kanal wechseln |
+| `./openclaw-update.sh --channel stable` | Zurueck auf Stable-Kanal |
+| `./openclaw-update.sh --no-backup` | Backup-Schritt ueberspringen |
+| `./openclaw-update.sh --timeout 120` | Health-Check Timeout aendern (Standard: 60s) |
+| `./openclaw-update.sh --help` | Hilfe anzeigen |
+
+Optionen koennen kombiniert werden:
+
+```bash
+# Beta-Kanal, ohne Backup, mit erzwungenem Update
+./openclaw-update.sh --channel beta --no-backup --force
+```
+
+#### Was das Skript automatisch tut (6 Phasen)
+
+```
+Phase 1: Pre-Flight Checks
+  ✅ Prueft ob Node.js 22+ installiert ist
+  ✅ Prueft ob openclaw CLI vorhanden ist
+  ✅ Erkennt Install-Methode (npm/pnpm global vs. git source)
+  ✅ Prueft Netzwerk-Konnektivitaet
+  ✅ Prueft Festplattenspeicher (mind. 500MB)
+  ✅ Prueft ob Gateway laeuft
+  ✅ Vergleicht aktuelle mit neuester Version
+
+Phase 2: Backup
+  ✅ Sichert openclaw.json, Credentials, Auth-Profiles, .env
+  ✅ Speichert unter ~/.openclaw/backups/YYYYMMDD-HHMMSS/
+  ✅ Behaelt die letzten 10 Backups, loescht aeltere
+
+Phase 3: Update
+  ✅ Erkennt automatisch: npm/pnpm → npm i -g | source → openclaw update
+  ✅ Bei Fehler: automatischer Recovery-Versuch mit openclaw doctor
+
+Phase 4: Doctor
+  ✅ Fuehrt openclaw doctor aus (Config-Migration, Health-Check)
+  ✅ Bei Problemen: automatisch openclaw doctor --fix
+
+Phase 5: Gateway Restart
+  ✅ Startet Gateway neu
+  ✅ Bei Fehler: versucht stop + wait + start
+
+Phase 6: Health Verification
+  ✅ Wartet bis Gateway healthy ist (mit Timeout)
+  ✅ Prueft Model-Status (Credentials ok?)
+  ✅ Prueft Channel-Status (WhatsApp/Telegram ok?)
+```
+
+#### Log-Datei
+
+Jeder Update-Lauf wird vollstaendig protokolliert:
+
+```bash
+# Log-Dateien liegen unter /tmp/
+ls /tmp/openclaw-update-*.log
+
+# Letztes Log ansehen
+cat /tmp/openclaw-update-$(date +%Y%m%d)*.log
+```
+
+#### Tipps
+
+- **Vor dem ersten Update:** Starte mit `--dry-run` um zu sehen ob alles passt
+- **Bei Problemen:** Das Skript zeigt dir genau, wo es gescheitert ist + Log-Pfad
+- **Automatisierung:** Nutze `--force` in einem Cronjob fuer automatische Updates
+- **Rollback:** Falls ein Update schiefgeht, liegt dein Backup unter `~/.openclaw/backups/`
+
+### Manuelles Update (Docker-Setup)
 
 ```bash
 # Normales Update (mit Bestaetigung)
@@ -1099,24 +1193,18 @@ cd ~/openclaw
 ./update_moltbot.sh --force
 ```
 
-### Was das Update-Skript tut
-
-1. **Backup erstellt** - Kopiert `.env`, `moltbot.json`, `docker-compose.yml`
-   und n8n-Datenbank nach `backups/backup_YYYYMMDD_HHMMSS/`
-2. **Alte Backups aufraeumen** - Behaelt die letzten 30
-3. **Bestaetigung abfragen** (ausser `--force`)
-4. **Images pullen** - Neueste Versionen herunterladen
-5. **Container neu starten**
-6. **Health-Check** - Prueft ob alle Container gesund sind
-7. **Update-Log schreiben** - Dokumentiert in `logs/updates.log`
-
 ### Rollback bei Problemen
 
 ```bash
 # Letztes Backup finden
-ls ~/openclaw/backups/
+ls ~/.openclaw/backups/
 
-# Rollback ausfuehren
+# Rollback: Version pinnen (npm install)
+npm i -g openclaw@<version>
+openclaw doctor
+openclaw gateway restart
+
+# Rollback: Docker-Setup
 cd ~/openclaw
 cp backups/backup_20260131_120000/docker-compose.yml .
 cp backups/backup_20260131_120000/config/* config/
@@ -1421,12 +1509,209 @@ Bemerkungen: ___________________________________
 
 ---
 
+## 11. OpenClaw Cheatsheet — Alle Befehle auf einen Blick
+
+> Kopiere einfach den Befehl, den du brauchst. Sortiert nach Aufgabe.
+
+---
+
+### Updaten
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Automatisches Update (empfohlen) | `./openclaw-update.sh` |
+| Nur pruefen, nichts aendern | `./openclaw-update.sh --dry-run` |
+| Update erzwingen | `./openclaw-update.sh --force` |
+| Beta-Kanal nutzen | `./openclaw-update.sh --channel beta` |
+| Update per Installer (macOS/Linux) | `curl -fsSL https://openclaw.ai/install.sh \| bash` |
+| Update per Installer (Windows) | `iwr -useb https://openclaw.ai/install.ps1 \| iex` |
+| Update per npm | `npm i -g openclaw@latest` |
+| Update per pnpm | `pnpm add -g openclaw@latest` |
+| Update per CLI (git source) | `openclaw update` |
+| Update ohne Gateway-Restart | `openclaw update --no-restart` |
+| Update-Status pruefen | `openclaw update status` |
+| Interaktiver Update-Wizard | `openclaw update wizard` |
+| Nach JEDEM Update ausfuehren! | `openclaw doctor` |
+| Probleme automatisch reparieren | `openclaw doctor --fix` |
+
+---
+
+### Gateway (Starten, Stoppen, Status)
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Gateway-Status anzeigen | `openclaw gateway status` |
+| Gateway starten | `openclaw gateway start` |
+| Gateway stoppen | `openclaw gateway stop` |
+| Gateway neustarten | `openclaw gateway restart` |
+| Gateway als Dienst installieren | `openclaw gateway install` |
+| Gateway-Dienst entfernen | `openclaw gateway uninstall` |
+| Gateway im Vordergrund (Debug) | `openclaw gateway --port 18789` |
+| Gateway verbose (Debug) | `openclaw gateway --verbose` |
+| Gateway-Erreichbarkeit testen | `openclaw gateway probe` |
+| Tiefer Check (Ports, Provider) | `openclaw gateway status --deep` |
+| Status als JSON | `openclaw gateway status --json` |
+| macOS: Dienst neustarten | `launchctl kickstart -k gui/$UID/bot.molt.gateway` |
+| Linux: Dienst neustarten | `systemctl --user restart openclaw-gateway.service` |
+
+---
+
+### Gesundheits-Check & Status
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Schneller Ueberblick | `openclaw status` |
+| Volle Diagnose (sicher zum Teilen) | `openclaw status --all` |
+| Tiefe Diagnose mit Provider-Probes | `openclaw status --deep` |
+| Ist Gateway erreichbar? | `openclaw health` |
+| Health als JSON | `openclaw health --json` |
+| Health mit Details | `openclaw health --verbose` |
+| Channel-Status mit Live-Probes | `openclaw channels status --probe` |
+
+---
+
+### LLM / Modelle
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Modell-Status anzeigen | `openclaw models status` |
+| Live-Auth-Probes (nutzt Tokens!) | `openclaw models status --probe` |
+| Automation: Exit-Code 1=fehlt, 2=laeuft ab | `openclaw models status --check` |
+| Nur primaeres Modell anzeigen | `openclaw models status --plain` |
+| Alle verfuegbaren Modelle auflisten | `openclaw models list` |
+| Standard-Modell wechseln | `openclaw models set <provider/model>` |
+| Anthropic API-Key setzen | `export ANTHROPIC_API_KEY="sk-ant-..."` |
+| API-Key dauerhaft speichern | `echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.openclaw/.env` |
+| Claude-Abo Token einrichten | `openclaw models auth setup-token --provider anthropic` |
+| Token manuell einfuegen | `openclaw models auth paste-token --provider anthropic` |
+| Anderen Provider anmelden | `openclaw models auth login --provider <name>` |
+| Interaktiv Credentials hinzufuegen | `openclaw models auth add` |
+
+**Im Chat (waehrend einer Sitzung):**
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Modell-Picker oeffnen | `/model` |
+| Verfuegbare Modelle anzeigen | `/model list` |
+| Modell-Status im Chat | `/model status` |
+| Modell wechseln | `/model <alias-oder-id>` |
+
+---
+
+### Logs & Debugging
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Live-Logs anzeigen | `openclaw logs --follow` |
+| Direkt in Log-Datei schauen | `tail -f /tmp/openclaw/openclaw-*.log` |
+| macOS Service-Logs | `cat ~/.openclaw/logs/gateway.log` |
+| Linux Service-Logs | `journalctl --user -u openclaw-gateway.service` |
+
+**Debug-Level erhoehen** in `~/.openclaw/openclaw.json`:
+
+```json
+{ "logging": { "level": "debug" } }
+```
+
+---
+
+### Konfiguration
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Config-Wert setzen | `openclaw config set <key> <value>` |
+| Config-Wert lesen | `openclaw config get <key>` |
+| Interaktiver Config-Wizard | `openclaw configure` |
+| Starter-Config erstellen | `openclaw setup` |
+
+---
+
+### Troubleshooting — Erste 60 Sekunden
+
+Wenn etwas nicht funktioniert, fuehre diese 4 Befehle der Reihe nach aus:
+
+```bash
+openclaw status              # 1. Was laeuft, was nicht?
+openclaw gateway status      # 2. Gateway ok? PID? Fehler?
+openclaw logs --follow       # 3. Was sagt das Log?
+openclaw doctor              # 4. Automatische Reparatur
+```
+
+---
+
+### Troubleshooting — Haeufige Probleme
+
+| Problem | Loesung |
+|---------|---------|
+| Gateway startet nicht | `openclaw doctor --fix` dann `openclaw gateway restart` |
+| "EADDRINUSE" / Port belegt | `openclaw gateway status` (zeigt wer den Port nutzt) |
+| Keine Antworten vom Bot | `openclaw status` (AllowFrom-Liste pruefen) |
+| "All Models Failed" | `openclaw models status --probe` (Credentials pruefen) |
+| OAuth-Token abgelaufen | `openclaw models auth setup-token --provider anthropic` |
+| WhatsApp getrennt | `openclaw channels logout` dann `openclaw channels login --verbose` |
+| Nach Update kaputt | `openclaw doctor --fix` dann `openclaw gateway restart` |
+| Alles kaputt (letzter Ausweg) | `openclaw gateway stop && trash ~/.openclaw && openclaw channels login` |
+
+---
+
+### Rollback / Version Pinning
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Bestimmte Version installieren | `npm i -g openclaw@<version>` |
+| Aktuelle npm-Version pruefen | `npm view openclaw version` |
+| Git: Zu Datum zurueck | `git checkout "$(git rev-list -n 1 --before=\"2026-01-01\" origin/main)"` |
+| Nach Rollback immer ausfuehren | `openclaw doctor && openclaw gateway restart` |
+
+---
+
+### Wichtige Dateien & Pfade
+
+| Pfad | Was ist das |
+|------|-------------|
+| `~/.openclaw/openclaw.json` | Haupt-Konfiguration |
+| `~/.openclaw/credentials/` | Auth-Tokens & API-Keys |
+| `~/.openclaw/workspace` | Agent-Arbeitsverzeichnis |
+| `~/.openclaw/.env` | Umgebungsvariablen fuer den Daemon |
+| `/tmp/openclaw/openclaw-*.log` | Gateway Log-Dateien |
+| `~/.openclaw/logs/` | Service-Logs (macOS) |
+| `~/.openclaw/agents/` | Agent-Sessions & Daten |
+
+---
+
+### Wichtige Umgebungsvariablen
+
+| Variable | Wofuer |
+|----------|--------|
+| `OPENCLAW_HOME` | Home-Verzeichnis (Standard: `~/.openclaw`) |
+| `OPENCLAW_STATE_DIR` | State-Verzeichnis ueberschreiben |
+| `OPENCLAW_CONFIG_PATH` | Config-Datei-Pfad ueberschreiben |
+| `OPENCLAW_GATEWAY_TOKEN` | Gateway Auth-Token |
+| `ANTHROPIC_API_KEY` | Anthropic API-Key |
+
+---
+
+### Docker-Befehle (fuer Docker-Setup)
+
+| Was du willst | Befehl |
+|---------------|--------|
+| Alle Services starten | `cd ~/openclaw && docker compose up -d` |
+| Nur n8n starten | `docker compose up -d n8n` |
+| Telegram starten | `docker compose --profile telegram up -d` |
+| Logs eines Containers | `docker logs -f openclaw-agent` |
+| WhatsApp QR-Code anzeigen | `docker logs -f openclaw-whatsapp` |
+| n8n Health-Check (intern) | `docker exec openclaw-agent wget -q -O- http://n8n:5678/healthz` |
+| Alles stoppen | `cd ~/openclaw && docker compose down` |
+
+---
+
 ## Dateien in diesem Repository
 
 | Datei | Beschreibung |
 |-------|-------------|
 | `setup_moltbot.sh` | Setup-Skript - erstellt alles |
-| `update_moltbot.sh` | Update-Skript mit Backup |
+| `update_moltbot.sh` | Update-Skript mit Backup (Docker-Setup) |
+| `openclaw-update.sh` | Bulletproof Self-Update Skript (CLI-Setup) |
 | `README.md` | Diese Dokumentation |
 | `README-CREDENTIAL-ISOLATION.md` | Detaillierte n8n Workflow-Beispiele |
 
