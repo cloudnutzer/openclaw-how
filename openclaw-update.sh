@@ -27,7 +27,7 @@ resolve_path() {
         return
     fi
     # Fallback for macOS < 15 (BSD readlink without -f)
-    python3 -c "import os; print(os.path.realpath('$target'))" 2>/dev/null \
+    python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$target" 2>/dev/null \
         || echo "$target"
 }
 
@@ -72,8 +72,8 @@ while [[ $# -gt 0 ]]; do
         --force)      FORCE=true; shift ;;
         --dry-run)    DRY_RUN=true; shift ;;
         --no-backup)  SKIP_BACKUP=true; shift ;;
-        --channel)    UPDATE_CHANNEL="$2"; shift 2 ;;
-        --timeout)    HEALTH_TIMEOUT="$2"; shift 2 ;;
+        --channel)    [[ $# -ge 2 ]] || die "--channel requires a value (stable|beta|dev)"; UPDATE_CHANNEL="$2"; shift 2 ;;
+        --timeout)    [[ $# -ge 2 ]] || die "--timeout requires a value (seconds)"; HEALTH_TIMEOUT="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: $0 [--force] [--channel <stable|beta|dev>] [--dry-run] [--no-backup] [--timeout <secs>]"
             exit 0
@@ -282,8 +282,11 @@ if [[ "$INSTALL_METHOD" == "source" ]]; then
     log "Using: openclaw update --channel $UPDATE_CHANNEL --no-restart"
     openclaw update --channel "$UPDATE_CHANNEL" --no-restart 2>&1 | tee -a "$LOG_FILE" || UPDATE_EXIT=$?
 else
-    log "Using: npm global install (openclaw@latest)"
-    npm i -g "openclaw@latest" 2>&1 | tee -a "$LOG_FILE" || UPDATE_EXIT=$?
+    NPM_TAG="latest"
+    if [[ "$UPDATE_CHANNEL" == "beta" ]]; then NPM_TAG="beta"; fi
+    if [[ "$UPDATE_CHANNEL" == "dev" ]]; then NPM_TAG="dev"; fi
+    log "Using: npm global install (openclaw@${NPM_TAG})"
+    npm i -g "openclaw@${NPM_TAG}" 2>&1 | tee -a "$LOG_FILE" || UPDATE_EXIT=$?
 fi
 
 if [[ $UPDATE_EXIT -ne 0 ]]; then
