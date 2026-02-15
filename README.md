@@ -11,7 +11,7 @@
 
 1. [Kontext](#1-kontext)
 2. [Docker-Architektur](#2-docker-architektur)
-3. [Setup-Skript](#3-setup-skript)
+3. [1-Click Setup](#3-1-click-setup)
 4. [Credential Isolation mit n8n](#4-credential-isolation-mit-n8n)
 5. [WhatsApp-Integration](#5-whatsapp-integration)
 6. [Telegram-Integration](#6-telegram-integration)
@@ -126,12 +126,25 @@ Schicht 6: Detection   - Honeypots, Audit-Logs, Anomalie-Erkennung
 
 ---
 
-## 3. Setup-Skript
+## 3. 1-Click Setup
+
+Das Setup-Skript `setup_openclaw.sh` ist ein 1-Click Installer: Ein einziger
+Befehl installiert Docker (falls noetig), konfiguriert den gesamten Zero-Trust
+Stack, liefert fertige n8n-Workflow-Templates und startet optional alles.
+
+Du musst nichts manuell installieren oder konfigurieren — das Skript fuehrt
+dich interaktiv durch den Prozess.
 
 ### Voraussetzungen
 
-- Linux oder macOS (Docker wird automatisch installiert falls noetig)
-- openssl (fuer Key-Generierung)
+- **Linux** oder **macOS** (Intel und Apple Silicon)
+- openssl (auf den meisten Systemen bereits vorhanden)
+- Docker wird **automatisch installiert** falls nicht vorhanden:
+  - **macOS:** Ueber [Colima](https://github.com/abiosoft/colima) — ein
+    Open-Source Docker-Runtime fuer macOS. Colima ersetzt Docker Desktop und
+    laeuft ohne GUI, ohne Lizenzkosten und ist ideal fuer Automation.
+  - **Linux:** Ueber das offizielle [get.docker.com](https://get.docker.com)
+    Installationsskript.
 
 ### Ausfuehrung
 
@@ -296,7 +309,7 @@ docker logs openclaw-n8n
 # Du solltest sehen: "n8n ready on 0.0.0.0, port 5678"
 ```
 
-#### Schritt 2: n8n im Browser oeffnen
+#### Schritt 2: n8n im Browser oeffnen und Owner-Account erstellen
 
 Oeffne deinen Browser und gehe zu:
 
@@ -304,16 +317,17 @@ Oeffne deinen Browser und gehe zu:
 http://localhost:5678
 ```
 
-Du siehst ein Login-Formular. Deine Zugangsdaten stehen in der `.env`-Datei:
+Beim ersten Start siehst du einen **Setup-Bildschirm** (nicht ein Login-Formular).
+n8n 1.0+ nutzt eigene Benutzerverwaltung statt Basic Auth:
 
-```bash
-# Passwort nachschauen (User ist "openclaw-admin")
-grep N8N_PASSWORD ~/openclaw/config/.env
-```
+1. Gib eine **E-Mail-Adresse** ein (z.B. `admin@example.com`)
+2. Waehle ein **sicheres Passwort**
+3. Optional: Gib einen **Vor- und Nachnamen** ein
+4. Klicke auf **"Next"** / **"Set up"**
 
-Melde dich an mit:
-- **Email/User:** `openclaw-admin`
-- **Password:** (der Wert aus der .env-Datei)
+> **Wichtig:** Merke dir diese Zugangsdaten — sie sind dein n8n-Admin-Login.
+> n8n speichert sie verschluesselt lokal (geschuetzt durch den
+> `N8N_ENCRYPTION_KEY` in deiner `.env`).
 
 #### Schritt 3: Die n8n-Oberflaeche verstehen
 
@@ -419,24 +433,106 @@ Namen auf Gmail/Calendar zugreifen kann.
 Wiederhole den Vorgang fuer **"Google Calendar OAuth2 API"** falls noetig.
 Du kannst dieselbe Client-ID und dasselbe Client-Secret verwenden.
 
-#### Schritt 5: Deinen ersten Workflow erstellen ("Gmail lesen")
+#### Schritt 5: Workflows importieren (empfohlen)
 
-Jetzt bauen wir den ersten Workflow. Er nimmt Anfragen vom Bot entgegen
-und gibt die letzten 10 Mail-Betreffs zurueck.
+Das Setup-Skript hat 4 fertige Workflow-Templates nach `~/openclaw/n8n-workflows/`
+kopiert. Der schnellste Weg ist, diese zu importieren — statt jeden Workflow
+von Hand zu bauen.
 
-##### 5a. Neuen Workflow erstellen
+##### 5a. Workflow importieren
+
+1. Klicke in der Sidebar auf **"Workflows"**
+2. Klicke oben rechts auf **"..."** (drei Punkte) > **"Import from File"**
+3. Navigiere zu `~/openclaw/n8n-workflows/`
+4. Waehle **`openclaw-gmail-read.json`** aus
+5. Der Workflow erscheint im Editor mit allen Nodes vorkonfiguriert:
+
+```
+[Webhook] ──> [Gmail: Get Many] ──> [Code: Filter] ──> [Respond to Webhook]
+```
+
+##### 5b. Google-Credential verbinden
+
+Der importierte Workflow hat einen Platzhalter fuer die Gmail-Credential.
+Du musst ihn mit deiner echten Credential verbinden:
+
+1. Doppelklicke auf den **Gmail**-Node
+2. Unter **"Credential"** klicke auf das Dropdown
+3. Waehle die Gmail-Credential, die du in Schritt 4e erstellt hast
+4. Klicke **"Save"** (oder schliesse das Fenster)
+
+##### 5c. Workflow aktivieren
+
+1. Klicke oben rechts den Toggle **"Inactive"** -> **"Active"**
+   (Der Toggle wird orange/gruen)
+2. Der Workflow ist jetzt dauerhaft aktiv und wartet auf Anfragen
+
+**Wichtig:** Wenn der Workflow aktiv ist, nutzt er die URL
+`/webhook/openclaw/gmail/read` (ohne `-test`). Der Bot verwendet
+automatisch diese URL.
+
+##### 5d. Workflow testen
+
+Oeffne ein **neues Terminal** und sende eine Test-Anfrage:
+
+```bash
+# Ersetze DEIN_WEBHOOK_SECRET mit dem Wert aus config/.env
+curl -s -X POST http://localhost:5678/webhook/openclaw/gmail/read \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: DEIN_WEBHOOK_SECRET" \
+  -d '{}' | python3 -m json.tool
+```
+
+Du solltest eine JSON-Antwort mit deinen letzten 10 Mail-Betreffs sehen:
+
+```json
+[
+  {
+    "id": "18d3a...",
+    "subject": "Deine Bestellung ist unterwegs",
+    "from": "shop@example.com",
+    "date": "Fri, 31 Jan 2026 10:00:00 +0100",
+    "snippet": "Lieferung voraussichtlich Montag..."
+  }
+]
+```
+
+##### 5e. Restliche Workflows importieren
+
+Wiederhole Schritte 5a-5c fuer die uebrigen drei Templates:
+
+| Datei | Workflow | Credential verbinden |
+|-------|----------|---------------------|
+| `openclaw-gmail-send.json` | Gmail senden (mit Validierung) | Gmail OAuth2 |
+| `openclaw-calendar-read.json` | Kalender lesen (naechste 7 Tage) | Google Calendar OAuth2 |
+| `openclaw-calendar-create.json` | Termin erstellen (mit Validierung) | Google Calendar OAuth2 |
+
+**Anpassen nach Import:** Beim Gmail-Send-Workflow solltest du die erlaubten
+Empfaenger-Domains anpassen. Doppelklicke auf den **"Validate Input"**-Node
+und aendere die `allowedDomains`-Liste:
+
+```javascript
+// ANPASSEN: Trage hier deine erlaubten Domains ein
+const allowedDomains = ['@deinedomain.de', '@partner.com'];
+```
+
+#### Schritt 6: Workflows manuell erstellen (optional)
+
+> Falls du die Templates nicht nutzen moechtest oder eigene Workflows bauen
+> willst, findest du hier die manuelle Anleitung am Beispiel "Gmail lesen".
+
+##### 6a. Neuen Workflow erstellen
 
 1. Klicke in der Sidebar auf **"Workflows"**
 2. Klicke **"+ Add workflow"** (oder das Plus-Symbol oben rechts)
 3. Du siehst jetzt den **Workflow-Editor** - eine leere Flaeche mit einem
    Start-Node in der Mitte
 
-##### 5b. Webhook-Node hinzufuegen (Eingang)
+##### 6b. Webhook-Node hinzufuegen (Eingang)
 
 Der Webhook ist der "Eingang" - hier kommen die Anfragen vom Bot rein.
 
 1. Klicke auf das **"+"**-Symbol rechts vom Start-Node
-   (oder klicke irgendwo auf die Flaeche und dann oben auf **"+ Add node"**)
 2. Suche nach **"Webhook"**
 3. Klicke auf **"Webhook"** um ihn hinzuzufuegen
 4. Konfiguriere den Webhook:
@@ -447,58 +543,28 @@ Der Webhook ist der "Eingang" - hier kommen die Anfragen vom Bot rein.
      - Name: `X-Webhook-Secret`
      - Value: (kopiere den WEBHOOK_SECRET aus deiner .env)
 
-So sieht die Konfiguration aus:
-
-```
-┌─────────────────────────────┐
-│  Webhook                    │
-│                             │
-│  HTTP Method:  POST         │
-│  Path:  openclaw/gmail/read │
-│  Auth:  Header Auth         │
-│    Name:  X-Webhook-Secret  │
-│    Value: (dein Secret)     │
-└─────────────────────────────┘
-```
-
-##### 5c. Gmail-Node hinzufuegen
+##### 6c. Gmail-Node hinzufuegen
 
 1. Klicke auf das **"+"** rechts vom Webhook-Node
 2. Suche nach **"Gmail"**
 3. Klicke auf **"Gmail"**
 4. Konfiguriere:
-   - **Credential:** Waehle die Gmail-Credential, die du in Schritt 4e erstellt hast
+   - **Credential:** Waehle deine Gmail-Credential aus Schritt 4e
    - **Resource:** `Message`
    - **Operation:** `Get Many`
    - **Return All:** Nein
    - **Limit:** `10`
-   - Unter **"Add Filter"**:
-     - **Label IDs:** `INBOX`
+   - Unter **"Add Filter"**: **Label IDs:** `INBOX`
 
-So sieht die Konfiguration aus:
-
-```
-┌─────────────────────────────┐
-│  Gmail                      │
-│                             │
-│  Credential:  Gmail OAuth2  │
-│  Resource:    Message       │
-│  Operation:   Get Many      │
-│  Limit:       10            │
-│  Label:       INBOX         │
-└─────────────────────────────┘
-```
-
-##### 5d. Code-Node hinzufuegen (Daten filtern)
+##### 6d. Code-Node hinzufuegen (Daten filtern)
 
 Wir wollen **nicht** den kompletten Mail-Inhalt an den Bot zurueckgeben -
-nur Betreff, Absender und Datum. Dafuer nutzen wir einen Code-Node.
+nur Betreff, Absender und Datum.
 
 1. Klicke auf **"+"** rechts vom Gmail-Node
 2. Suche nach **"Code"**
-3. Klicke auf **"Code"**
-4. Waehle **JavaScript** als Sprache
-5. Ersetze den Code mit:
+3. Waehle **JavaScript** als Sprache
+4. Ersetze den Code mit:
 
 ```javascript
 // Nur sichere Metadaten zurueckgeben - KEINE vollstaendigen Mail-Bodies
@@ -507,7 +573,6 @@ const results = [];
 for (const item of $input.all()) {
   const headers = item.json.payload?.headers || [];
 
-  // Header-Werte extrahieren
   const getHeader = (name) => {
     const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());
     return h ? h.value : '(unbekannt)';
@@ -528,134 +593,13 @@ for (const item of $input.all()) {
 return results;
 ```
 
-##### 5e. Respond-Node hinzufuegen (Antwort an Bot)
+##### 6e. Respond-Node und Aktivierung
 
 1. Klicke auf **"+"** rechts vom Code-Node
 2. Suche nach **"Respond to Webhook"**
-3. Klicke drauf
-4. Konfiguriere:
-   - **Respond With:** `All Incoming Items`
-
-##### 5f. Workflow testen
-
-Dein Workflow sieht jetzt so aus:
-
-```
-[Webhook] ──> [Gmail: Get Many] ──> [Code: Filter] ──> [Respond to Webhook]
-```
-
-1. Klicke oben rechts auf **"Test workflow"** (Play-Button)
-2. n8n wartet jetzt auf eine eingehende Webhook-Anfrage
-3. Oeffne ein **neues Terminal** und sende eine Test-Anfrage:
-
-```bash
-# Ersetze DEIN_WEBHOOK_SECRET mit dem Wert aus config/.env
-curl -s -X POST http://localhost:5678/webhook-test/openclaw/gmail/read \
-  -H "Content-Type: application/json" \
-  -H "X-Webhook-Secret: DEIN_WEBHOOK_SECRET" \
-  -d '{}' | python3 -m json.tool
-```
-
-Du solltest eine JSON-Antwort mit deinen letzten 10 Mail-Betreffs sehen:
-
-```json
-[
-  {
-    "id": "18d3a...",
-    "subject": "Deine Bestellung ist unterwegs",
-    "from": "shop@example.com",
-    "date": "Fri, 31 Jan 2026 10:00:00 +0100",
-    "snippet": "Lieferung voraussichtlich Montag..."
-  }
-]
-```
-
-4. Zurueck in n8n siehst du gruene Haekchen an jedem Node - der Test war erfolgreich
-
-##### 5g. Workflow aktivieren
-
-1. Klicke oben rechts den Toggle **"Inactive"** -> **"Active"**
-   (Der Toggle wird orange/gruen)
-2. Der Workflow ist jetzt dauerhaft aktiv und wartet auf Anfragen
-
-**Wichtig:** Wenn der Workflow aktiv ist, aendert sich die URL von
-`/webhook-test/...` zu `/webhook/...` (ohne `-test`). Der Bot nutzt
-die URL **ohne** `-test`.
-
-##### 5h. Workflow speichern und benennen
-
-1. Klicke oben links auf den Workflow-Namen (steht "My workflow")
-2. Benenne ihn um: `Openclaw - Gmail Read`
-3. Klicke irgendwo ausserhalb zum Speichern (oder `Ctrl+S`)
-
-#### Schritt 6: Zweiten Workflow erstellen ("Gmail senden")
-
-Wiederhole den Vorgang, aber mit diesen Aenderungen:
-
-1. Neuen Workflow erstellen, Name: `Openclaw - Gmail Send`
-2. **Webhook-Node:**
-   - Path: `openclaw/gmail/send`
-   - Methode: POST
-   - Header Auth wie oben
-3. **Code-Node (Validierung)** - Fuege **vor** dem Gmail-Node einen Code-Node ein:
-
-```javascript
-// Validierung BEVOR die Mail gesendet wird
-const input = $input.all()[0].json.body || $input.all()[0].json;
-
-const errors = [];
-
-// 1. Empfaenger pruefen - nur erlaubte Domains
-const allowedDomains = ['@deinedomain.de', '@partner.com'];
-const to = (input.to || '').toLowerCase();
-if (!allowedDomains.some(d => to.endsWith(d))) {
-  errors.push('Empfaenger ' + input.to + ' nicht in Whitelist. Erlaubt: ' + allowedDomains.join(', '));
-}
-
-// 2. Pflichtfelder
-if (!input.to) errors.push('Kein Empfaenger angegeben');
-if (!input.subject) errors.push('Kein Betreff angegeben');
-if (!input.body) errors.push('Kein Text angegeben');
-
-// 3. Laengen-Limits
-if ((input.body || '').length > 5000) {
-  errors.push('Text zu lang (max. 5000 Zeichen)');
-}
-
-// 4. Keine Attachments
-if (input.attachments && input.attachments.length > 0) {
-  errors.push('Attachments sind nicht erlaubt');
-}
-
-if (errors.length > 0) {
-  throw new Error('Validierung fehlgeschlagen: ' + errors.join('; '));
-}
-
-// Validiert - weiterleiten
-return [{
-  json: {
-    to: input.to,
-    subject: '[Openclaw] ' + (input.subject || '').substring(0, 100),
-    body: input.body
-  }
-}];
-```
-
-4. **Gmail-Node (Senden):**
-   - Operation: `Send`
-   - To: `{{ $json.to }}`
-   - Subject: `{{ $json.subject }}`
-   - Message: `{{ $json.body }}`
-
-5. **Respond-Node:**
-   - Respond With: `JSON`
-   - Body: `{ "success": true, "message": "Mail gesendet" }`
-
-Fertiger Workflow:
-
-```
-[Webhook] ──> [Code: Validierung] ──> [Gmail: Send] ──> [Respond to Webhook]
-```
+3. Konfiguriere: **Respond With:** `All Incoming Items`
+4. Benenne den Workflow um: `Openclaw - Gmail Read`
+5. Aktiviere den Workflow (Toggle oben rechts)
 
 #### Schritt 7: Port wieder schliessen!
 
@@ -842,8 +786,8 @@ Wenn du viele Services anbindest (Gmail, Calendar, Notion, Slack, ...):
 # Pruefe, ob der Key gesetzt ist:
 grep N8N_ENCRYPTION_KEY ~/openclaw/config/.env
 
-# 2. Basic Auth ist NICHT fuer Produktion geeignet wenn n8n extern erreichbar waere.
-# In unserem Setup ist n8n nur intern erreichbar -> Basic Auth ist OK.
+# 2. n8n 1.0+ nutzt Owner-basierte Authentifizierung (kein Basic Auth mehr).
+# In unserem Setup ist n8n nur intern erreichbar -> zusaetzlich abgesichert.
 
 # 3. n8n-Updates einspielen (regelmaessig!)
 docker pull n8nio/n8n:latest
@@ -854,18 +798,29 @@ cd ~/openclaw && docker compose up -d n8n
 #    EXECUTIONS_DATA_PRUNE=true
 ```
 
+#### Mitgelieferte Workflow-Templates
+
+Diese 4 Workflows werden durch `setup_openclaw.sh` als importierbare
+JSON-Dateien bereitgestellt (siehe Schritt 5 oben):
+
+| Workflow | Datei | Was er tut |
+|----------|-------|-----------|
+| Gmail Read | `openclaw-gmail-read.json` | Letzte 10 Mail-Betreffs (nur Metadaten) |
+| Gmail Send | `openclaw-gmail-send.json` | Mail senden (Domain-Whitelist, Laengen-Limit, Audit) |
+| Calendar Read | `openclaw-calendar-read.json` | Termine der naechsten 7 Tage (private gefiltert) |
+| Calendar Create | `openclaw-calendar-create.json` | Termin erstellen (Validierung, Audit) |
+
 #### Weitere Workflow-Ideen
 
 | Workflow | Webhook-Path | Was er tut |
 |----------|-------------|-----------|
-| Calendar Read | `/openclaw/calendar/read` | Termine der naechsten 7 Tage |
-| Calendar Create | `/openclaw/calendar/create` | Termin erstellen (mit Validierung) |
 | Notion Query | `/openclaw/notion/query` | Notion-Datenbank durchsuchen |
 | Slack Send | `/openclaw/slack/send` | Nachricht in Slack-Channel posten |
 | File Upload | `/openclaw/files/upload` | Datei zu Google Drive hochladen |
 | Security Alert | `/openclaw/security-alert` | Honeypot/Intrusion-Alarm verarbeiten |
 
-Ausfuehrliche Workflow-JSONs fuer Gmail, Calendar und Notion findest du in
+Die Workflow-Templates liegen unter `n8n-workflows/` in diesem Repository.
+Weitere Beispiel-JSONs und die Credential-Isolation-Architektur findest du in
 [README-CREDENTIAL-ISOLATION.md](README-CREDENTIAL-ISOLATION.md).
 
 ---
