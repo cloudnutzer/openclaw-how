@@ -47,7 +47,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Audit Log\nconsole.log(JSON.stringify({\n  timestamp: new Date().toISOString(),\n  action: 'gmail_send',\n  to: $json.to,\n  subject: $json.subject,\n  bodyLength: $json.body?.length || 0\n}));\n\nreturn [{ json: { success: true, message: 'E-Mail gesendet' } }];"
+        "jsCode": "// Audit Log - Daten aus dem Validate-Node holen (Gmail API Response hat andere Felder)\nconst validated = $('Validate & Sanitize').item.json;\n\nconsole.log(JSON.stringify({\n  timestamp: new Date().toISOString(),\n  action: 'gmail_send',\n  to: validated.to,\n  subject: validated.subject,\n  bodyLength: validated.body?.length || 0,\n  gmailMessageId: $json.id || null\n}));\n\nreturn [{ json: { success: true, message: 'E-Mail gesendet', messageId: $json.id || null } }];"
       },
       "id": "audit-log",
       "name": "Audit Log",
