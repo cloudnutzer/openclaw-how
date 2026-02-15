@@ -1,0 +1,90 @@
+{
+  "name": "OpenClaw - Calendar Read",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "openclaw/calendar/read",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "webhook-calendar-read",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "openclaw-calendar-read"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 20,
+        "options": {
+          "timeMin": "={{ $now.toISO() }}",
+          "timeMax": "={{ $now.plus({days: 7}).toISO() }}",
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "id": "calendar-read",
+      "name": "Google Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 3,
+      "position": [480, 300],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "",
+          "name": "-- Google Calendar OAuth2 hier verbinden --"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entferne private Termine und sensible Details\nreturn $input.all().map(item => ({\n  json: {\n    id: item.json.id,\n    title: item.json.summary,\n    start: item.json.start?.dateTime || item.json.start?.date,\n    end: item.json.end?.dateTime || item.json.end?.date,\n    location: item.json.location || null,\n    isBusy: item.json.transparency !== 'transparent'\n    // KEINE: attendees, description, conferenceData, attachments\n  }\n})).filter(item => {\n  // Filtere explizit private Termine\n  const title = (item.json.title || '').toLowerCase();\n  return !title.includes('privat') && !title.includes('personal');\n});"
+      },
+      "id": "filter-events",
+      "name": "Filter Private Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Google Calendar", "type": "main", "index": 0 }]
+      ]
+    },
+    "Google Calendar": {
+      "main": [
+        [{ "node": "Filter Private Events", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Private Events": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": [
+    { "name": "openclaw" },
+    { "name": "calendar" }
+  ],
+  "pinData": {}
+}

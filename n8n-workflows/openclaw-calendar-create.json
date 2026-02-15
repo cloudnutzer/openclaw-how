@@ -1,0 +1,109 @@
+{
+  "name": "OpenClaw - Calendar Create",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "openclaw/calendar/create",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "webhook-calendar-create",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "openclaw-calendar-create"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validierung BEVOR der Termin erstellt wird\nconst input = $input.all()[0].json.body || $input.all()[0].json;\n\nconst errors = [];\n\n// 1. Pflichtfelder\nif (!input.summary && !input.title) {\n  errors.push('Kein Titel/Summary angegeben');\n}\nif (!input.start) {\n  errors.push('Keine Startzeit angegeben');\n}\nif (!input.end) {\n  errors.push('Keine Endzeit angegeben');\n}\n\n// 2. Datum muss in der Zukunft liegen\nconst startDate = new Date(input.start);\nif (startDate < new Date()) {\n  errors.push('Startzeit liegt in der Vergangenheit');\n}\n\n// 3. Titel-Laenge begrenzen\nconst title = (input.summary || input.title || '').substring(0, 200);\nif (title.length === 0) {\n  errors.push('Titel darf nicht leer sein');\n}\n\n// 4. Beschreibung begrenzen (optional)\nconst description = (input.description || '').substring(0, 2000);\n\n// 5. Kein HTML in Beschreibung\nif (/<[^>]+>/.test(description)) {\n  errors.push('HTML in Beschreibung ist nicht erlaubt');\n}\n\nif (errors.length > 0) {\n  throw new Error('Validierung fehlgeschlagen: ' + errors.join('; '));\n}\n\nreturn [{\n  json: {\n    summary: '[OpenClaw] ' + title,\n    start: input.start,\n    end: input.end,\n    description: description,\n    location: (input.location || '').substring(0, 200)\n  }\n}];"
+      },
+      "id": "validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "summary": "={{ $json.summary }}",
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end }}",
+        "additionalFields": {
+          "description": "={{ $json.description }}",
+          "location": "={{ $json.location }}"
+        }
+      },
+      "id": "calendar-create",
+      "name": "Google Calendar Create",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 3,
+      "position": [720, 300],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "",
+          "name": "-- Google Calendar OAuth2 hier verbinden --"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Audit Log\nconsole.log(JSON.stringify({\n  timestamp: new Date().toISOString(),\n  action: 'calendar_create',\n  summary: $json.summary,\n  start: $json.start?.dateTime || $json.start,\n  end: $json.end?.dateTime || $json.end\n}));\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Termin erstellt',\n    eventId: $json.id,\n    summary: $json.summary\n  }\n}];"
+      },
+      "id": "audit-log",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Validate Input", "type": "main", "index": 0 }]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [{ "node": "Google Calendar Create", "type": "main", "index": 0 }]
+      ]
+    },
+    "Google Calendar Create": {
+      "main": [
+        [{ "node": "Audit Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "Audit Log": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": [
+    { "name": "openclaw" },
+    { "name": "calendar" }
+  ],
+  "pinData": {}
+}

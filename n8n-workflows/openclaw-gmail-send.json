@@ -1,0 +1,101 @@
+{
+  "name": "OpenClaw - Gmail Send",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "openclaw/gmail/send",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "webhook-gmail-send",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "openclaw-gmail-send"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validierung BEVOR die Mail gesendet wird\nconst input = $input.all()[0].json.body || $input.all()[0].json;\n\nconst errors = [];\n\n// 1. Empfaenger pruefen - nur erlaubte Domains\n// ANPASSEN: Trage hier deine erlaubten Domains ein\nconst allowedDomains = ['@deinedomain.de', '@partner.com'];\nconst to = (input.to || '').toLowerCase();\nif (!allowedDomains.some(d => to.endsWith(d))) {\n  errors.push('Empfaenger ' + input.to + ' nicht in Whitelist. Erlaubt: ' + allowedDomains.join(', '));\n}\n\n// 2. Pflichtfelder\nif (!input.to) errors.push('Kein Empfaenger angegeben');\nif (!input.subject) errors.push('Kein Betreff angegeben');\nif (!input.body) errors.push('Kein Text angegeben');\n\n// 3. Laengen-Limits\nif ((input.body || '').length > 5000) {\n  errors.push('Text zu lang (max. 5000 Zeichen)');\n}\n\n// 4. Keine Attachments\nif (input.attachments && input.attachments.length > 0) {\n  errors.push('Attachments sind nicht erlaubt');\n}\n\nif (errors.length > 0) {\n  throw new Error('Validierung fehlgeschlagen: ' + errors.join('; '));\n}\n\n// Validiert - weiterleiten\nreturn [{\n  json: {\n    to: input.to,\n    subject: '[OpenClaw] ' + (input.subject || '').substring(0, 100),\n    body: input.body\n  }\n}];"
+      },
+      "id": "validate",
+      "name": "Validate & Sanitize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "gmail-send",
+      "name": "Gmail Send",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [720, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "-- Gmail OAuth2 hier verbinden --"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Audit Log\nconsole.log(JSON.stringify({\n  timestamp: new Date().toISOString(),\n  action: 'gmail_send',\n  to: $json.to,\n  subject: $json.subject,\n  bodyLength: $json.body?.length || 0\n}));\n\nreturn [{ json: { success: true, message: 'E-Mail gesendet' } }];"
+      },
+      "id": "audit-log",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Validate & Sanitize", "type": "main", "index": 0 }]
+      ]
+    },
+    "Validate & Sanitize": {
+      "main": [
+        [{ "node": "Gmail Send", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gmail Send": {
+      "main": [
+        [{ "node": "Audit Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "Audit Log": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": [
+    { "name": "openclaw" },
+    { "name": "gmail" }
+  ],
+  "pinData": {}
+}

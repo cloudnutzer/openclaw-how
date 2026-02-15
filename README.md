@@ -3,10 +3,7 @@
 > Stand: Februar 2026 | Version 2.1
 >
 > **Hinweis zur Namensgebung:** Dieses Projekt hiess frueher "Moltbot" bzw.
-> "Clawdbot" und wurde zu "OpenClaw" umbenannt. Einige Setup-Skripte und
-> Config-Dateien tragen noch den alten Namen (`setup_moltbot.sh`,
-> `moltbot.json`) — das ist beabsichtigt, um bestehende Installationen
-> nicht zu brechen.
+> "Clawdbot" und wurde zu "OpenClaw" umbenannt.
 
 ---
 
@@ -133,9 +130,8 @@ Schicht 6: Detection   - Honeypots, Audit-Logs, Anomalie-Erkennung
 
 ### Voraussetzungen
 
-- Docker >= 24.0 mit Compose V2
+- Linux oder macOS (Docker wird automatisch installiert falls noetig)
 - openssl (fuer Key-Generierung)
-- Linux oder macOS
 
 ### Ausfuehrung
 
@@ -145,21 +141,38 @@ git clone <repo-url> openclaw-how
 cd openclaw-how
 
 # Ausfuehrbar machen & starten
-chmod +x setup_moltbot.sh
-./setup_moltbot.sh
+chmod +x setup_openclaw.sh
+./setup_openclaw.sh
 ```
 
-### Was das Skript tut
+### Was das Skript tut (4 Phasen)
 
-1. **Preflight-Checks** - Prueft Docker, Compose, openssl
-2. **Verzeichnisse erstellen** - Strukturierte Ordner unter `~/openclaw/`
-3. **API-Keys abfragen** - Unsichtbare Eingabe (wie Passwort), niemals in History
-4. **Secrets generieren** - n8n-Passwort, Encryption-Key, Webhook-Secret per `openssl rand`
-5. **`.env` schreiben** - chmod 600, nur Owner kann lesen
-6. **`docker-compose.yml` generieren** - Kompletter Stack mit allen Services
-7. **`moltbot.json` erstellen** - Sicherheits-Konfiguration
-8. **Honeypot-Dateien platzieren** - Fake SSH-Keys, AWS-Credentials, etc.
-9. **Nachtmodus-Cronjob** - Optional automatisch einrichten
+**Phase 1: Docker Setup**
+1. Erkennt das Betriebssystem (Linux/macOS)
+2. Prueft ob Docker installiert und gestartet ist
+3. Installiert Docker automatisch falls noetig:
+   - **macOS:** Homebrew + Colima + Docker CLI
+   - **Linux:** get.docker.com + systemd
+4. Verifiziert Docker Compose V2 und openssl
+
+**Phase 2: Configuration**
+5. **Verzeichnisse erstellen** - Strukturierte Ordner unter `~/openclaw/`
+6. **API-Keys abfragen** - Unsichtbare Eingabe (wie Passwort), niemals in History
+7. **Secrets generieren** - Encryption-Key, Webhook-Secret per `openssl rand`
+8. **`.env` schreiben** - chmod 600, nur Owner kann lesen
+9. **`docker-compose.yml` generieren** - Kompletter Stack mit allen Services
+10. **`openclaw.json` erstellen** - Sicherheits-Konfiguration
+11. **Honeypot-Dateien platzieren** - Fake SSH-Keys, AWS-Credentials, etc.
+12. **Nachtmodus-Cronjob** - Optional automatisch einrichten
+
+**Phase 3: n8n Workflow Templates**
+13. Kopiert 4 vorgefertigte n8n-Workflow-Templates in das Install-Verzeichnis
+    - Gmail Read, Gmail Send, Calendar Read, Calendar Create
+
+**Phase 4: Stack Startup**
+14. Startet den Docker-Stack (optional)
+15. Wartet auf n8n Health-Check
+16. Zeigt Zusammenfassung und naechste Schritte
 
 ### Erzeugte Verzeichnisstruktur
 
@@ -168,14 +181,15 @@ chmod +x setup_moltbot.sh
 ├── docker-compose.yml
 ├── .env -> config/.env
 ├── nightmode.sh
-├── update_moltbot.sh
+├── openclaw-update.sh
 ├── config/
 │   ├── .env              (chmod 600 - Secrets)
-│   └── moltbot.json      (Sicherheits-Config)
+│   └── openclaw.json     (Sicherheits-Config)
 ├── workspace/            (Bot-Arbeitsverzeichnis)
 ├── logs/                 (Audit + Intrusion)
 ├── backups/              (automatische Backups)
-├── n8n-data/             (n8n Workflows)
+├── n8n-data/             (n8n Workflows + Credentials)
+├── n8n-workflows/        (Importierbare Workflow-Templates)
 ├── whatsapp-data/        (WhatsApp Session)
 └── telegram-data/        (Telegram Bot)
 ```
@@ -245,7 +259,7 @@ Credentials) und gibt nur die erlaubten Daten zurueck.
 #### Schritt 1: n8n starten
 
 n8n ist bereits in deiner `docker-compose.yml` enthalten (wurde durch
-`setup_moltbot.sh` erstellt). Du musst nur den Zugang freischalten.
+`setup_openclaw.sh` erstellt). Du musst nur den Zugang freischalten.
 
 ```bash
 # Oeffne die docker-compose.yml in einem Texteditor
@@ -1046,7 +1060,7 @@ Zusaetzliche Sicherheit:
 
 ## 7. Sicherheits-Konfiguration
 
-Die Datei `config/moltbot.json` steuert alle Sicherheitsaspekte. Hier die
+Die Datei `config/openclaw.json` steuert alle Sicherheitsaspekte. Hier die
 wichtigsten Bereiche:
 
 ### 7.1 Human-in-the-Loop
@@ -1206,15 +1220,10 @@ cat /tmp/openclaw-update-$(date +%Y%m%d)*.log
 ### Manuelles Update (Docker-Setup)
 
 ```bash
-# Normales Update (mit Bestaetigung)
+# Images aktualisieren und Stack neu starten
 cd ~/openclaw
-./update_moltbot.sh
-
-# Einzelnen Service updaten
-./update_moltbot.sh --service openclaw
-
-# Automatisches Update (z.B. fuer Cron)
-./update_moltbot.sh --force
+docker compose pull
+docker compose up -d
 ```
 
 ### Rollback bei Problemen
@@ -1768,20 +1777,21 @@ openclaw doctor              # 4. Automatische Reparatur
 
 | Datei | Beschreibung |
 |-------|-------------|
-| `setup_moltbot.sh` | Setup-Skript - erstellt alles |
-| `update_moltbot.sh` | Update-Skript mit Backup (Docker-Setup) |
+| `setup_openclaw.sh` | 1-Click Installer (Docker + Stack + n8n Templates) |
 | `openclaw-update.sh` | Bulletproof Self-Update Skript (CLI-Setup) |
+| `n8n-workflows/` | Vorgefertigte n8n Workflow-Templates (Gmail, Calendar) |
 | `README.md` | Diese Dokumentation |
 | `README-CREDENTIAL-ISOLATION.md` | Detaillierte n8n Workflow-Beispiele |
 
-Nach Ausfuehrung von `setup_moltbot.sh` zusaetzlich unter `~/openclaw/`:
+Nach Ausfuehrung von `setup_openclaw.sh` zusaetzlich unter `~/openclaw/`:
 
 | Datei | Beschreibung |
 |-------|-------------|
 | `docker-compose.yml` | Docker Stack Definition |
 | `config/.env` | Secrets (chmod 600) |
-| `config/moltbot.json` | Sicherheits-Konfiguration |
+| `config/openclaw.json` | Sicherheits-Konfiguration |
 | `nightmode.sh` | Nachtmodus Start/Stop |
+| `n8n-workflows/` | Importierbare Workflow-Templates |
 
 ---
 

@@ -1,8 +1,8 @@
-# 🔐 Credential Isolation für Moltbot
+# 🔐 Credential Isolation für OpenClaw
 
 ## Das Problem
 
-Wenn du Moltbot Zugriff auf Gmail, Google Calendar, Notion etc. geben willst, stehst du vor einem Dilemma:
+Wenn du OpenClaw Zugriff auf Gmail, Google Calendar, Notion etc. geben willst, stehst du vor einem Dilemma:
 
 **Schlecht:** API-Keys direkt im Bot-Container
 ```
@@ -61,14 +61,14 @@ Füge diesen Service zu deiner `docker-compose.yml` hinzu:
 
 ```yaml
 services:
-  # ... bestehende Moltbot Services ...
+  # ... bestehende OpenClaw Services ...
 
   #----------------------------------------------------------------------------
   # N8N - Credential Isolation Middleware
   #----------------------------------------------------------------------------
   n8n:
     image: n8nio/n8n:latest
-    container_name: moltbot-n8n
+    container_name: openclaw-n8n
     restart: unless-stopped
     
     user: "1000:1000"
@@ -94,11 +94,7 @@ services:
       - N8N_PROTOCOL=http
       - WEBHOOK_URL=http://n8n:5678/
       
-      # Sicherheit
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
-      
+      # n8n 1.0+ uses owner-based auth (set up via UI on first start)
       # Encryption für Credentials
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
       
@@ -107,13 +103,13 @@ services:
       - N8N_PERSONALIZATION_ENABLED=false
     
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthz"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 3
     
     networks:
-      - moltbot-internal
+      - openclaw-internal
 ```
 
 ### Schritt 2: Sichere Credentials generieren
@@ -122,8 +118,6 @@ Füge zu deiner `.env` hinzu:
 
 ```bash
 # n8n Middleware Credentials
-N8N_USER=moltbot-admin
-N8N_PASSWORD=$(openssl rand -base64 32)
 N8N_ENCRYPTION_KEY=$(openssl rand -hex 32)
 
 # Webhook Secret (für Authentifizierung Bot → n8n)
@@ -135,7 +129,7 @@ WEBHOOK_SECRET=$(openssl rand -hex 24)
 Nach dem Start von n8n (temporär Port freigeben für Setup):
 
 1. Öffne `http://localhost:5678`
-2. Melde dich mit N8N_USER/N8N_PASSWORD an
+2. Erstelle einen Owner-Account (n8n 1.0+ nutzt eigene Benutzerverwaltung)
 3. Erstelle Workflows für jede erlaubte Aktion
 
 ---
@@ -155,14 +149,14 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
 
 ```json
 {
-  "name": "Moltbot - Gmail Read",
+  "name": "OpenClaw - Gmail Read",
   "nodes": [
     {
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "parameters": {
         "httpMethod": "POST",
-        "path": "moltbot/gmail/read",
+        "path": "openclaw/gmail/read",
         "authentication": "headerAuth",
         "options": {}
       }
@@ -226,14 +220,14 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
 
 ```json
 {
-  "name": "Moltbot - Gmail Send (Restricted)",
+  "name": "OpenClaw - Gmail Send (Restricted)",
   "nodes": [
     {
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "parameters": {
         "httpMethod": "POST",
-        "path": "moltbot/gmail/send",
+        "path": "openclaw/gmail/send",
         "authentication": "headerAuth"
       }
     },
@@ -241,7 +235,7 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
       "name": "Validate & Sanitize",
       "type": "n8n-nodes-base.code",
       "parameters": {
-        "jsCode": "const input = $input.all()[0].json;\n\n// Validierung\nconst errors = [];\n\n// 1. Webhook Secret prüfen\nif ($node.Webhook.headers['x-webhook-secret'] !== process.env.WEBHOOK_SECRET) {\n  throw new Error('Unauthorized');\n}\n\n// 2. Nur erlaubte Empfänger\nconst allowedDomains = ['@meinefirma.de', '@partner.com'];\nconst toEmail = input.to?.toLowerCase() || '';\nif (!allowedDomains.some(d => toEmail.endsWith(d))) {\n  errors.push(`Empfänger ${input.to} nicht in Whitelist`);\n}\n\n// 3. Keine Attachments erlaubt\nif (input.attachments && input.attachments.length > 0) {\n  errors.push('Attachments sind nicht erlaubt');\n}\n\n// 4. Max. Länge\nif ((input.body?.length || 0) > 5000) {\n  errors.push('E-Mail zu lang (max 5000 Zeichen)');\n}\n\n// 5. Keine Links in E-Mail (optional)\nif (/https?:\\/\\//i.test(input.body || '')) {\n  errors.push('Links in E-Mails nicht erlaubt');\n}\n\nif (errors.length > 0) {\n  throw new Error('Validation failed: ' + errors.join(', '));\n}\n\nreturn [{\n  json: {\n    to: input.to,\n    subject: `[Moltbot] ${input.subject}`.substring(0, 100),\n    body: input.body,\n    validated: true\n  }\n}];"
+        "jsCode": "const input = $input.all()[0].json;\n\n// Validierung\nconst errors = [];\n\n// 1. Webhook Secret prüfen\nif ($node.Webhook.headers['x-webhook-secret'] !== process.env.WEBHOOK_SECRET) {\n  throw new Error('Unauthorized');\n}\n\n// 2. Nur erlaubte Empfänger\nconst allowedDomains = ['@meinefirma.de', '@partner.com'];\nconst toEmail = input.to?.toLowerCase() || '';\nif (!allowedDomains.some(d => toEmail.endsWith(d))) {\n  errors.push(`Empfänger ${input.to} nicht in Whitelist`);\n}\n\n// 3. Keine Attachments erlaubt\nif (input.attachments && input.attachments.length > 0) {\n  errors.push('Attachments sind nicht erlaubt');\n}\n\n// 4. Max. Länge\nif ((input.body?.length || 0) > 5000) {\n  errors.push('E-Mail zu lang (max 5000 Zeichen)');\n}\n\n// 5. Keine Links in E-Mail (optional)\nif (/https?:\\/\\//i.test(input.body || '')) {\n  errors.push('Links in E-Mails nicht erlaubt');\n}\n\nif (errors.length > 0) {\n  throw new Error('Validation failed: ' + errors.join(', '));\n}\n\nreturn [{\n  json: {\n    to: input.to,\n    subject: `[OpenClaw] ${input.subject}`.substring(0, 100),\n    body: input.body,\n    validated: true\n  }\n}];"
       }
     },
     {
@@ -272,13 +266,13 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
 
 ```json
 {
-  "name": "Moltbot - Calendar Read",
+  "name": "OpenClaw - Calendar Read",
   "nodes": [
     {
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "parameters": {
-        "path": "moltbot/calendar/read"
+        "path": "openclaw/calendar/read"
       }
     },
     {
@@ -309,9 +303,9 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
 
 ---
 
-## Moltbot Konfiguration
+## OpenClaw Konfiguration
 
-### Webhook-URLs in moltbot.json
+### Webhook-URLs in openclaw.json
 
 ```json
 {
@@ -326,13 +320,13 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
       "endpoints": {
         "gmail": {
           "read": {
-            "path": "/moltbot/gmail/read",
+            "path": "/openclaw/gmail/read",
             "method": "POST",
             "description": "Liest die letzten 10 E-Mails (nur Metadaten)",
             "rateLimit": "10/minute"
           },
           "send": {
-            "path": "/moltbot/gmail/send",
+            "path": "/openclaw/gmail/send",
             "method": "POST",
             "description": "Sendet E-Mail (nur an Whitelist-Domains)",
             "requiresApproval": true,
@@ -341,13 +335,13 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
         },
         "calendar": {
           "read": {
-            "path": "/moltbot/calendar/read",
+            "path": "/openclaw/calendar/read",
             "method": "POST",
             "description": "Liest Termine der nächsten 7 Tage",
             "rateLimit": "20/minute"
           },
           "create": {
-            "path": "/moltbot/calendar/create",
+            "path": "/openclaw/calendar/create",
             "method": "POST",
             "description": "Erstellt neuen Termin",
             "requiresApproval": true,
@@ -356,7 +350,7 @@ Nach dem Start von n8n (temporär Port freigeben für Setup):
         },
         "notion": {
           "query": {
-            "path": "/moltbot/notion/query",
+            "path": "/openclaw/notion/query",
             "method": "POST",
             "description": "Durchsucht Notion-Datenbanken",
             "rateLimit": "30/minute"
@@ -400,7 +394,7 @@ sichere Middleware, die deine Aktionen validiert und einschränkt.
 ┌─────────────────────────────────────┐
 │         Docker Network              │
 │  ┌─────────┐      ┌─────────┐      │
-│  │ Moltbot │─────▶│   n8n   │      │
+│  │ OpenClaw │─────▶│   n8n   │      │
 │  └─────────┘      └────┬────┘      │
 │       ▲                │           │
 │       │           NAT/Firewall     │
@@ -419,7 +413,7 @@ sichere Middleware, die deine Aktionen validiert und einschränkt.
 ### Ebene 2: Webhook-Authentifizierung
 
 ```python
-# Moltbot sendet immer:
+# OpenClaw sendet immer:
 headers = {
     "X-Webhook-Secret": WEBHOOK_SECRET,
     "X-Request-ID": uuid4(),
@@ -457,7 +451,7 @@ if abs(now - header['X-Timestamp']) > 60 seconds:
   "requestId": "abc-123",
   "input": {
     "to": "kollege@firma.de",
-    "subject": "[Moltbot] Meeting Reminder"
+    "subject": "[OpenClaw] Meeting Reminder"
   },
   "result": "success",
   "duration": 1240
@@ -578,8 +572,8 @@ docker compose up -d n8n
 
 Mit diesem Setup:
 
-✅ **Moltbot hat KEINE API-Keys** für Gmail, Calendar, etc.  
+✅ **OpenClaw hat KEINE API-Keys** für Gmail, Calendar, etc.  
 ✅ **n8n hält alle Credentials** verschlüsselt und lokal  
 ✅ **Jede Aktion ist granular kontrolliert** (Whitelist, Limits, Filter)  
 ✅ **Audit-Trail** für alle Operationen  
-✅ **Selbst wenn Moltbot kompromittiert wird**, kann der Angreifer nur die definierten, eingeschränkten Aktionen ausführen
+✅ **Selbst wenn OpenClaw kompromittiert wird**, kann der Angreifer nur die definierten, eingeschränkten Aktionen ausführen

@@ -1,0 +1,91 @@
+{
+  "name": "OpenClaw - Gmail Read",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "openclaw/gmail/read",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "webhook-gmail-read",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "openclaw-gmail-read"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 10,
+        "filters": {
+          "labelIds": ["INBOX"],
+          "includeSpamTrash": false
+        },
+        "options": {
+          "format": "metadata"
+        }
+      },
+      "id": "gmail-read",
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [480, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "-- Gmail OAuth2 hier verbinden --"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nur sichere Metadaten zurueckgeben - KEINE vollstaendigen Mail-Bodies\nconst results = [];\n\nfor (const item of $input.all()) {\n  const headers = item.json.payload?.headers || [];\n\n  const getHeader = (name) => {\n    const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());\n    return h ? h.value : '(unbekannt)';\n  };\n\n  results.push({\n    json: {\n      id: item.json.id,\n      subject: getHeader('Subject'),\n      from: getHeader('From'),\n      date: getHeader('Date'),\n      snippet: (item.json.snippet || '').substring(0, 200)\n      // Bewusst KEIN body, KEINE attachments, KEINE weiteren Header\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "filter-data",
+      "name": "Filter Sensitive Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [960, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Gmail", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gmail": {
+      "main": [
+        [{ "node": "Filter Sensitive Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Sensitive Data": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": [
+    { "name": "openclaw" },
+    { "name": "gmail" }
+  ],
+  "pinData": {}
+}
