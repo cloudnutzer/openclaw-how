@@ -1,6 +1,6 @@
 # OpenClaw — Zero-Trust Implementierung
 
-> Stand: Februar 2026 | Version 2.1
+> Stand: Februar 2026 | Version 2.2
 >
 > **Hinweis zur Namensgebung:** Dieses Projekt hiess frueher "Moltbot" bzw.
 > "Clawdbot" und wurde zu "OpenClaw" umbenannt.
@@ -150,7 +150,7 @@ dich interaktiv durch den Prozess.
 
 ```bash
 # Herunterladen
-git clone <repo-url> openclaw-how
+git clone https://github.com/cloudnutzer/openclaw-how.git
 cd openclaw-how
 
 # Ausfuehrbar machen & starten
@@ -233,7 +233,7 @@ GUT (mit n8n):
 aehnlich wie Zapier oder Make, aber **selbst gehostet**. Du installierst es auf
 deinem eigenen Rechner/Server, und alle Daten bleiben bei dir.
 
-**Im Kontext von Openclaw nutzen wir n8n als "Gatekeeper":**
+**Im Kontext von OpenClaw nutzen wir n8n als "Gatekeeper":**
 
 ```
 Bot ──[Webhook + Secret]──> n8n ──[OAuth Token]──> Gmail API
@@ -383,7 +383,7 @@ Namen auf Gmail/Calendar zugreifen kann.
 1. Gehe zu **"APIs & Dienste"** > **"OAuth-Einwilligungsbildschirm"**
 2. Waehle **"Extern"** (oder "Intern" falls du Google Workspace hast)
 3. Fulle aus:
-   - **App-Name:** `Openclaw n8n`
+   - **App-Name:** `OpenClaw n8n`
    - **Support-E-Mail:** deine E-Mail
    - **Autorisierte Domains:** (leer lassen)
    - **Kontakt-E-Mail des Entwicklers:** deine E-Mail
@@ -598,7 +598,7 @@ return results;
 1. Klicke auf **"+"** rechts vom Code-Node
 2. Suche nach **"Respond to Webhook"**
 3. Konfiguriere: **Respond With:** `All Incoming Items`
-4. Benenne den Workflow um: `Openclaw - Gmail Read`
+4. Benenne den Workflow um: `OpenClaw - Gmail Read`
 5. Aktiviere den Workflow (Toggle oben rechts)
 
 #### Schritt 7: Port wieder schliessen!
@@ -626,20 +626,19 @@ aendern, Port schliessen.
 #### Schritt 8: Pruefen ob alles funktioniert
 
 ```bash
-# 1. Pruefe ob n8n intern erreichbar ist (vom Bot-Container aus)
-docker exec openclaw-agent wget -q -O- http://n8n:5678/healthcheck
-# Erwartete Antwort: {"status":"ok"}
+# 1. Pruefe ob n8n laeuft (Container-Status)
+docker inspect --format='{{.State.Health.Status}}' openclaw-n8n
+# Erwartete Antwort: healthy
 
 # 2. Pruefe ob n8n von aussen NICHT erreichbar ist
 curl -s http://localhost:5678/healthcheck
 # Erwartete Antwort: Connection refused (gut!)
 
-# 3. Teste den Workflow vom Bot-Container aus
-docker exec openclaw-agent wget -q -O- \
-  --header="Content-Type: application/json" \
-  --header="X-Webhook-Secret: $(grep WEBHOOK_SECRET ~/openclaw/config/.env | cut -d= -f2)" \
-  --post-data='{}' \
-  http://n8n:5678/webhook/openclaw/gmail/read
+# 3. Teste den Workflow vom Host aus (Port muss temporaer offen sein)
+curl -s -X POST http://localhost:5678/webhook/openclaw/gmail/read \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: $(grep WEBHOOK_SECRET ~/openclaw/config/.env | cut -d= -f2)" \
+  -d '{}' | python3 -m json.tool
 ```
 
 ---
@@ -677,7 +676,7 @@ return $input.all();
 
 Erstelle einen separaten Workflow, der alle Aktionen protokolliert:
 
-1. Neuer Workflow: `Openclaw - Audit Log`
+1. Neuer Workflow: `OpenClaw - Audit Log`
 2. Webhook-Path: `openclaw/internal/audit`
 3. Code-Node:
 
@@ -769,8 +768,8 @@ Wenn du viele Services anbindest (Gmail, Calendar, Notion, Slack, ...):
 
 1. **Jeder Service bekommt eigene Credentials** in n8n - nicht ein grosses
    Sammel-Token
-2. **Credentials benennen** nach Schema: `Openclaw - Gmail (Read)`,
-   `Openclaw - Gmail (Send)`, `Openclaw - Calendar (Read)`
+2. **Credentials benennen** nach Schema: `OpenClaw - Gmail (Read)`,
+   `OpenClaw - Gmail (Send)`, `OpenClaw - Calendar (Read)`
 3. **Minimale Berechtigungen**: Gmail-Read-Credential bekommt nur
    `gmail.readonly` Scope, nicht den vollen Zugriff
 4. **Rotation**: Pruefe alle 90 Tage, ob die OAuth-Tokens noch gueltig sind.
@@ -786,8 +785,8 @@ Wenn du viele Services anbindest (Gmail, Calendar, Notion, Slack, ...):
 # Pruefe, ob der Key gesetzt ist:
 grep N8N_ENCRYPTION_KEY ~/openclaw/config/.env
 
-# 2. n8n 1.0+ nutzt Owner-basierte Authentifizierung (kein Basic Auth mehr).
-# In unserem Setup ist n8n nur intern erreichbar -> zusaetzlich abgesichert.
+# 2. n8n nutzt Owner-basierte Authentifizierung (Account bei erstem Start).
+# In unserem Setup ist n8n zusaetzlich durch Docker-Netzwerk-Isolation geschuetzt.
 
 # 3. n8n-Updates einspielen (regelmaessig!)
 docker pull n8nio/n8n:latest
@@ -905,7 +904,7 @@ an dich schreiben). Der Bot sollte antworten.
 3. Erstelle einen neuen Bot: Tippe `/newbot`
 4. BotFather fragt nach einem **Namen** fuer den Bot:
    ```
-   Openclaw Assistant
+   OpenClaw Assistant
    ```
 5. BotFather fragt nach einem **Benutzernamen** (muss auf `bot` enden):
    ```
@@ -929,7 +928,7 @@ Weiterhin im Chat mit @BotFather:
 
 ```
 /setdescription
-  -> Openclaw KI-Assistent. Nur fuer autorisierten Gebrauch.
+  -> OpenClaw KI-Assistent. Nur fuer autorisierten Gebrauch.
 
 /setabouttext
   -> Zero-Trust KI-Assistent auf Basis von Claude.
@@ -951,7 +950,7 @@ Du brauchst deine Chat-ID, damit der Bot **nur dir** antwortet:
 2. Er antwortet mit deiner **Chat-ID** (eine Zahl wie `123456789`)
 3. Notiere diese Zahl
 
-#### 6.5 Token in Openclaw eintragen
+#### 6.5 Token in OpenClaw eintragen
 
 ```bash
 # .env bearbeiten
@@ -1574,7 +1573,7 @@ Bemerkungen: ___________________________________
 | Gateway-Erreichbarkeit testen | `openclaw gateway probe` |
 | Tiefer Check (Ports, Provider) | `openclaw gateway status --deep` |
 | Status als JSON | `openclaw gateway status --json` |
-| macOS: Dienst neustarten | `launchctl kickstart -k gui/$UID/bot.molt.gateway` |
+| macOS: Dienst neustarten | `launchctl kickstart -k gui/$UID/bot.openclaw.gateway` |
 | Linux: Dienst neustarten | `systemctl --user restart openclaw-gateway.service` |
 
 ---
@@ -1673,7 +1672,7 @@ openclaw doctor              # 4. Automatische Reparatur
 | OAuth-Token abgelaufen | `openclaw models auth setup-token --provider anthropic` |
 | WhatsApp getrennt | `openclaw channels logout` dann `openclaw channels login --verbose` |
 | Nach Update kaputt | `openclaw doctor --fix` dann `openclaw gateway restart` |
-| Alles kaputt (letzter Ausweg) | Siehe Sektion 4.9 in der Troubleshooting-Anleitung (Backup zuerst!) |
+| Alles kaputt (letzter Ausweg) | Backup sichern, dann `setup_openclaw.sh` erneut ausfuehren (bestehende Secrets werden beibehalten) |
 
 ---
 

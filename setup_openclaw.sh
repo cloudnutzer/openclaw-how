@@ -368,7 +368,7 @@ services:
 
     security_opt:
       - no-new-privileges:true
-      - seccomp:unconfined
+      - seccomp:default
 
     cap_drop:
       - ALL
