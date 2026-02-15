@@ -40,7 +40,7 @@ prompt_secret() {
             log_error "Input must not be empty."
         fi
     done
-    eval "$var_name='$value'"
+    printf -v "$var_name" '%s' "$value"
 }
 
 prompt_optional() {
@@ -50,7 +50,7 @@ prompt_optional() {
     echo -ne "${YELLOW}${prompt_text} [${default}]: ${NC}"
     read -r value
     value="${value:-$default}"
-    eval "$var_name='$value'"
+    printf -v "$var_name" '%s' "$value"
 }
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -168,12 +168,11 @@ if [ "$DOCKER_INSTALLED" = false ]; then
         fi
 
         if ! docker info &>/dev/null; then
-            # Try with newgrp or sudo
+            # Try with sudo to confirm Docker itself is working
             if sudo docker info &>/dev/null; then
-                log_warn "Docker works with sudo. Log out and back in for group membership to take effect."
-                log_warn "Continuing with sudo for this session..."
-                # Create a wrapper so the rest of the script works
-                DOCKER_CMD="sudo docker"
+                log_warn "Docker is installed but requires 'sudo' to run."
+                log_warn "You were added to the 'docker' group, but it takes effect after re-login."
+                die "Log out, log back in, then re-run this script."
             else
                 die "Docker installation failed. Check: sudo systemctl status docker"
             fi
@@ -390,6 +389,10 @@ services:
       - ./config/openclaw.json:/home/botuser/.config/openclaw.json:ro
       # Logs
       - ./logs:/home/botuser/logs:rw
+      # Honeypot files (intrusion detection - read-only traps)
+      - ./.ssh_honeypot/id_rsa:/home/botuser/.ssh/id_rsa:ro
+      - ./.aws_honeypot/credentials:/home/botuser/.aws/credentials:ro
+      - ./.env_honeypot_production:/home/botuser/.env.production:ro
 
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
